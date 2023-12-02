@@ -22,7 +22,7 @@ class Swip
    static_assert(unswizzled_bit == 0x8000000000000000, "");
    static_assert(mask == 0x7FFFFFFFFFFFFFFF, "");
 
-  public:
+   public:
    union {
       u64 pid;
       BufferFrame* bf;
@@ -30,7 +30,7 @@ class Swip
    // -------------------------------------------------------------------------------------
    Swip() = default;
    Swip(BufferFrame* bf) : bf(bf) {}
-   Swip(u64 pid) : pid(pid) {}
+   Swip(u64 pid) : pid(pid | unswizzled_bit) {}
    template <typename T2>
    Swip(Swip& other) : pid(other.pid)
    {
@@ -48,13 +48,9 @@ class Swip
    // -------------------------------------------------------------------------------------
    void warm(BufferFrame* bf) { this->bf = bf; }
    // -------------------------------------------------------------------------------------
-   void swizzle()
-   {
-      assert(isUNSWIZZLED());
-      pid = pid & ~unswizzled_bit;
-   }
+   void cool(u64 pid) { this->pid = pid | unswizzled_bit; }
    // -------------------------------------------------------------------------------------
-   void unswizzle() { this->pid = pid | unswizzled_bit; }
+   static Swip fromPID(u64 pid) { return Swip(pid); }
 };
 // -------------------------------------------------------------------------------------
 }  // namespace guidedresearch

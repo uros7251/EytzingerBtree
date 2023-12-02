@@ -13,47 +13,35 @@
 
 namespace guidedresearch {
 
-class BufferFrame; // forward declaration
-
 class BufferFrame {
    private:
    friend class BufferManager;
 
    u64 pid;
    std::shared_mutex latch;
-   bool dirty;
-   u8* data;
+   bool exclusive = false;
+   bool dirty = false;
+
+   std::vector<char> data;
 
    public:
-   /// Constructor
-   BufferFrame(u64 pid, u8* data) noexcept;
+   /// Constructor.
+   BufferFrame(u64 pid) noexcept;
    // Constructor.
    BufferFrame(BufferFrame&& o) noexcept;
    // Assignment
    BufferFrame& operator=(BufferFrame&& o) noexcept;
 
    /// Returns a pointer to this page's data.
-   u8* get_data() { return data; }
-
-   /// Iterator callback
-   virtual std::vector<Swip> get_swips() { return std::vector<Swip>(); };
+   char* get_data() { return data.data(); }
 };
+
 
 class BufferManager {
    private:
    std::mutex bm_lock;
-   size_t page_size;
-   size_t page_count;
+   size_t page_size, page_count;
    std::vector<BufferFrame> frames;
-   std::list<BufferFrame*> fifo;
-   std::unordered_map<u64, std::list<BufferFrame*>::iterator> hashmap;
-   u8 *buffer;
-
-   /// Unswizzle a random page in the buffer. Page can be unswizzled if it contains only unswizzled swips
-   void unswizzle_random();
-
-   /// Checks if the percentage of unswizzled pages is below the target threshold
-   bool too_few_cooling() { return false; }
 
    public:
    BufferManager(const BufferManager&) = delete;
@@ -91,6 +79,10 @@ class BufferManager {
    /// written back to disk eventually.
    void unfix_page(BufferFrame& page, bool is_dirty);
 
+   /// Returns a list of all page ids that are currently loaded in memory.
+   /// For debugging purposes, not thread-safe.
+   std::vector<u64> get_all_pages() const;
+
    /// Returns the segment id for a given page id which is contained in the 16
    /// most significant bits of the page id.
    static constexpr uint16_t get_segment_id(u64 page_id) {
@@ -104,6 +96,13 @@ class BufferManager {
    }
 };
 
+class buffer_full_error
+: public std::exception {
+public:
+    [[nodiscard]] const char* what() const noexcept override {
+        return "buffer is full";
+    }
+};
 } // namespace guidedresearch
 
 #endif

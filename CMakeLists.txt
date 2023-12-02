@@ -25,6 +25,8 @@ find_package(Threads REQUIRED)
 
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 
+include("${CMAKE_SOURCE_DIR}/vendor/googletest.cmake")
+
 # ---------------------------------------------------------------------------
 # Includes
 # ---------------------------------------------------------------------------
@@ -32,6 +34,10 @@ set(THREADS_PREFER_PTHREAD_FLAG ON)
 include("${CMAKE_SOURCE_DIR}/include/local.cmake")
 include_directories(
     ${CMAKE_SOURCE_DIR}/include
+)
+
+include_directories(SYSTEM
+    ${GTEST_INCLUDE_DIR}
 )
 
 # ---------------------------------------------------------------------------
@@ -48,3 +54,9 @@ set(SRC_CC
 # ---------------------------------------------------------------------------
 add_library(grlib STATIC ${SRC_CC})
 target_link_libraries(grlib Threads::Threads)
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+include("${CMAKE_SOURCE_DIR}/test/local.cmake")
