@@ -9,7 +9,7 @@
 #include <list>
 #include <shared_mutex>
 #include <mutex>
-#include "Swip.h"
+#include "swip.h"
 
 namespace guidedresearch {
 
@@ -93,6 +93,10 @@ class BufferManager {
    /// corresponds to the 48 least significant bits of the page id.
    static constexpr uint64_t get_segment_page_id(u64 page_id) {
       return page_id & ((1ull << 48) - 1);
+   }
+
+   static constexpr uint64_t get_page_id(uint16_t segment_id, uint64_t segment_page_id) {
+      return (static_cast<uint64_t>(segment_id) << 48) ^ segment_page_id;
    }
 };
 

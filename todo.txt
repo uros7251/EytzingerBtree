@@ -1,0 +1,6 @@
+use optimistic lock coupling, currently using classical lock coupling (with mutexes)
+implement inner nodes with eytzinger layout
+use simd
+
+for later:
+try to add next_node pointers to leaf nodes while taking into account buffer manager based on pointer swizzling
