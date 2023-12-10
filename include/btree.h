@@ -2,7 +2,6 @@
 #define INCLUDE_BTREE_H
 
 #include <type_traits>
-#include <cstring>
 
 #include "buffer_manager.h"
 #include "segment.h"
@@ -85,12 +84,10 @@ struct BTree : public Segment {
 
             if (Node::count-1 == InnerNode::kCapacity) throw std::runtime_error("insert_split(): Not enough space!");
             auto [index, _] = lower_bound(key); // find index to insert key
-            std::memmove(&keys[index+1], &keys[index], sizeof(KeyT)*(Node::count-1-index)); // move keys
-            std::memmove(&children[index+2], &children[index+1], sizeof(uint64_t)*(Node::count-1-index)); // move children
-            // for (uint32_t i=Node::count-1; i>index; --i) {
-            //     keys[i] = keys[i-1];
-            //     children[i+1] = children[i];
-            // }
+            for (uint32_t i=Node::count-1; i>index; --i) {
+                keys[i] = keys[i-1];
+                children[i+1] = children[i];
+            }
             keys[index] = key; // insert new separator
             children[index+1] = child; // insert child
             Node::count++;
@@ -100,13 +97,11 @@ struct BTree : public Segment {
         /// @param index Index of the key and child to be erased
         void erase(uint16_t index) {
             if (index < Node::count-1u) {
-                // for (uint32_t i=index; i+2u<Node::count; ++i) {
-                //     keys[i] = keys[i+1];
-                //     children[i] = children[i+1];
-                // }
-                // children[Node::count-2] = children[Node::count-1];
-                std::memmove(&keys[index], &keys[index+1], sizeof(KeyT)*(Node::count-(index+2)));
-                std::memmove(&children[index], &children[index+1], sizeof(Swip)*(Node::count-(index+1)));
+                for (uint32_t i=index; i+2u<Node::count; ++i) {
+                    keys[i] = keys[i+1];
+                    children[i] = children[i+1];
+                }
+                children[Node::count-2] = children[Node::count-1];
             }
             --Node::count;
         }
@@ -119,13 +114,16 @@ struct BTree : public Segment {
             // old_node->keys = [1,2,3,4,5], old_node->count = 6
             // new_node->keys = [7,8,9,10], new_node->count = 5
             // separator = 6
-            auto* new_node = new (buffer) InnerNode(Node::level);
+            InnerNode* new_node = new (buffer) InnerNode(Node::level);
             // old_node retains floor((count-1)/2) keys
             // new_node gets floor(count/2)-1 keys
-            // move keys starting from index floor((count-1)/2)+1=floor((count+1)/2) (skip separator), in total ceil((count-1)/2)-1=floor(count/2)-1
-            std::memcpy(&new_node->keys[0], &keys[(Node::count+1)/2], sizeof(KeyT)*(Node::count/2-1));
+            // move keys starting from index floor((count-1)/2)+1=floor((count+1)/2)=ceil(count/2) (skip separator), in total ceil((count-1)/2)-1=floor(count/2)-1
             // move children starting from index ceil(count/2), in total floor(count/2)
-            std::memcpy(&new_node->children[0], &children[(Node::count+1)/2], sizeof(ValueT)*(Node::count/2));
+            for (auto i=0u, pos=(Node::count+1)/2; i<Node::count/2-1u; ++i) {
+                new_node->keys[i] = keys[i+pos];
+                new_node->children[i] = children[i+pos];
+            }
+            new_node->children[Node::count/2-1u] = children[Node::count-1];
             new_node->count = Node::count/2; // floor(count/2)
             Node::count -= Node::count/2; // ceil(count/2)
             return keys[Node::count-1]; // Node::count-1 = new number of keys in old_node
@@ -180,8 +178,10 @@ struct BTree : public Segment {
             if (Node::count == kCapacity) throw std::runtime_error("Not enough space!");
             auto [index, found] = lower_bound(key);
             if (!found && index < Node::count) { // if key should be inserted in the end, no need to move
-                std::memmove(&keys[index+1], &keys[index], sizeof(KeyT)*(Node::count-index));
-                std::memmove(&values[index+1], &values[index], sizeof(ValueT)*(Node::count-index));
+                for (auto i=Node::count; i>index; --i) {
+                    keys[i] = keys[i-1];
+                    values[i] = values[i-1];
+                }
             }
             keys[index] = key;
             values[index] = value;
@@ -204,13 +204,14 @@ struct BTree : public Segment {
             // for example, keys = [1,2,3,4,5,6,7,8,9,10], count = 10
             // old_node->keys = [1,2,3,4,5], old_node->count = 5
             // new_node->keys = [6,7,8,9,10], new_node->count = 5
-            auto* new_node = new (buffer) LeafNode();
+            LeafNode* new_node = new (buffer) LeafNode();
             // old_node retains ceil(count/2) keys
             // new_node gets floor(count/2) keys
-            // move keys starting from index ceil(count/2), in total floor(count/2)
-            std::memcpy(&new_node->keys[0], &keys[(Node::count+1)/2], sizeof(KeyT)*(Node::count/2));
-            // move values starting from index ceil(count/2), in total floor(count/2)
-            std::memcpy(&new_node->values[0], &values[(Node::count+1)/2], sizeof(ValueT)*(Node::count/2));
+            // move keys and values starting from index ceil(count/2), in total floor(count/2)
+            for (auto i=0u, pos=(Node::count+1)/2; i<Node::count/2; ++i) {
+                new_node->keys[i] = keys[pos+i];
+                new_node->values[i] = values[pos+i];
+            }
             new_node->count = Node::count/2; // floor(count/2)
             Node::count -= Node::count/2; // ceil(count/2)
             return keys[Node::count-1]; // return (new) rightmost key of old_node
@@ -229,8 +230,10 @@ struct BTree : public Segment {
         private:
         inline void erase(uint16_t index, int) {
             if (index < Node::count-1u) { // if key is last key, no need to move
-                std::memmove(&keys[index], &keys[index+1], sizeof(KeyT)*(Node::count-(index+1)));
-                std::memmove(&values[index], &values[index+1], sizeof(ValueT)*(Node::count-(index+1)));
+                for (auto i=index; i<Node::count-1; ++i) {
+                    keys[i] = keys[i+1];
+                    values[i] = values[i+1]; 
+                }
             }
             --Node::count;
         }
