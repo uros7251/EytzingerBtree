@@ -80,13 +80,17 @@ struct BTree : public Segment {
         /// @param[in] child        The child that should be inserted.
         void insert_split(const KeyT &key, Swip child) {
             // for example, insert_split(3, 40)
-            // BEFORE: keys = [1, 4, 9], pages = [8, 3, 13, 7]
-            // AFTER: keys = [1, 3, 4, 9], pages = [8, 3, 40, 13, 7]
+            // BEFORE: keys = [1, 4, 9], children = [8, 3, 13, 7]
+            // AFTER: keys = [1, 3, 4, 9], children = [8, 3, 40, 13, 7]
 
             if (Node::count-1 == InnerNode::kCapacity) throw std::runtime_error("insert_split(): Not enough space!");
             auto [index, _] = lower_bound(key); // find index to insert key
             std::memmove(&keys[index+1], &keys[index], sizeof(KeyT)*(Node::count-1-index)); // move keys
             std::memmove(&children[index+2], &children[index+1], sizeof(uint64_t)*(Node::count-1-index)); // move children
+            // for (uint32_t i=Node::count-1; i>index; --i) {
+            //     keys[i] = keys[i-1];
+            //     children[i+1] = children[i];
+            // }
             keys[index] = key; // insert new separator
             children[index+1] = child; // insert child
             Node::count++;
@@ -96,6 +100,11 @@ struct BTree : public Segment {
         /// @param index Index of the key and child to be erased
         void erase(uint16_t index) {
             if (index < Node::count-1u) {
+                // for (uint32_t i=index; i+2u<Node::count; ++i) {
+                //     keys[i] = keys[i+1];
+                //     children[i] = children[i+1];
+                // }
+                // children[Node::count-2] = children[Node::count-1];
                 std::memmove(&keys[index], &keys[index+1], sizeof(KeyT)*(Node::count-(index+2)));
                 std::memmove(&children[index], &children[index+1], sizeof(Swip)*(Node::count-(index+1)));
             }
@@ -180,11 +189,12 @@ struct BTree : public Segment {
         }
 
         /// Erase a key.
-        void erase(const KeyT &key) {
+        bool erase(const KeyT &key) {
             // try to find key
             auto [index, found] = lower_bound(key);
-            if (!found) return; // key not found
+            if (!found) return false; // key not found
             erase(index, 0);
+            return true;
         }
 
         /// Split the node.
@@ -229,11 +239,11 @@ struct BTree : public Segment {
     /// The root.
     Swip root;
     /// The next free page;
-    uint64_t next_available_page;
+    std::atomic_uint64_t next_available_page;
 
     /// Constructor.
     BTree(uint16_t segment_id, BufferManager &buffer_manager)
-        : Segment(segment_id, buffer_manager), root(BufferManager::get_page_id(segment_id, 0)), next_available_page(1) {
+        : Segment(segment_id, buffer_manager), root(BufferManager::get_page_id(segment_id, 0)), next_available_page(0) {
         
         auto &page = buffer_manager.fix_page(root, true);
         new (page.get_data()) LeafNode();
@@ -408,7 +418,7 @@ struct BTree : public Segment {
             child = reinterpret_cast<Node*>(child_page->get_data());
         }
         LeafNode *leaf = static_cast<LeafNode*>(child);
-        leaf->erase(key);
+        bool success = leaf->erase(key);
         buffer_manager.unfix_page(*child_page, true);
     }
 
@@ -424,240 +434,244 @@ struct BTree : public Segment {
     template<typename T>
     requires std::is_base_of_v<Node, T>
     T* allocate_node() {
-        Swip swip ((static_cast<uint64_t>(segment_id) << 48) ^ next_available_page++);
+        auto id = ++next_available_page;
+        Swip swip ((static_cast<uint64_t>(segment_id) << 48) ^ id);
         auto &page = buffer_manager.fix_page(swip, true);
         return new (page.get_data()) T();
     }
 
     BufferFrame* merge(BufferFrame *parent_page, BufferFrame *child_page, uint16_t child_slot, KeyT target) {
-            // hold tight, this is 200+ lines function
+        // hold tight, this is 200+ lines function :)
 
-            // assumes child and parent pages are already fixed
-            BufferFrame *neighboor_page;
-            Node *left_node, *right_node;
-            InnerNode *parent = reinterpret_cast<InnerNode*>(parent_page->get_data());
-            uint16_t left_slot;
-            // determine which sibling to merge with
-            if (child_slot == 0) {
-                // there is only right sibling
-                Swip &swip = parent->children[1];
-                neighboor_page = &buffer_manager.fix_page(swip, true);
-                left_slot = child_slot;
+        // assumes child and parent pages are already fixed
+        BufferFrame *neighboor_page;
+        Node *left_node, *right_node;
+        InnerNode *parent = reinterpret_cast<InnerNode*>(parent_page->get_data());
+        uint16_t left_slot;
+        // determine which sibling to merge with
+        if (child_slot == 0) {
+            // only right sibling exists
+            Swip &swip = parent->children[1];
+            neighboor_page = &buffer_manager.fix_page(swip, true);
+            left_slot = child_slot;
+            left_node = reinterpret_cast<Node*>(child_page->get_data());
+            right_node = reinterpret_cast<Node*>(neighboor_page->get_data());
+        }
+        else if (child_slot == parent->count-1) {
+            // only left sibling exists
+            Swip &swip = parent->children[parent->count-2];
+            neighboor_page = &buffer_manager.fix_page(swip, true);
+            left_slot = child_slot-1;
+            left_node = reinterpret_cast<Node*>(neighboor_page->get_data());
+            right_node = reinterpret_cast<Node*>(child_page->get_data());
+        }
+        else {
+            Swip &left_swip = parent->children[child_slot-1],
+                &right_swip = parent->children[child_slot+1];
+            BufferFrame *left_neighboor_page = &buffer_manager.fix_page(left_swip, true),
+                        *right_neighboor_page = &buffer_manager.fix_page(right_swip, true);
+            left_node = reinterpret_cast<Node*>(left_neighboor_page->get_data());
+            right_node = reinterpret_cast<Node*>(right_neighboor_page->get_data());
+            if (left_node->count > right_node->count) {
                 left_node = reinterpret_cast<Node*>(child_page->get_data());
-                right_node = reinterpret_cast<Node*>(neighboor_page->get_data());
-            }
-            else if (child_slot == parent->count-1) {
-                // there is only left sibling
-                Swip &swip = parent->children[parent->count-2];
-                neighboor_page = &buffer_manager.fix_page(swip, true);
-                left_slot = child_slot-1;
-                left_node = reinterpret_cast<Node*>(neighboor_page->get_data());
-                right_node = reinterpret_cast<Node*>(child_page->get_data());
+                left_slot = child_slot;
+                neighboor_page = right_neighboor_page;
+                buffer_manager.unfix_page(*left_neighboor_page, false);
             }
             else {
-                Swip &left_swip = parent->children[child_slot-1],
-                    &right_swip = parent->children[child_slot+1];
-                BufferFrame *left_neighboor_page = &buffer_manager.fix_page(left_swip, true),
-                            *right_neighboor_page = &buffer_manager.fix_page(right_swip, true);
-                left_node = reinterpret_cast<Node*>(left_neighboor_page->get_data());
-                right_node = reinterpret_cast<Node*>(right_neighboor_page->get_data());
-                if (left_node->count > right_node->count) {
-                    left_node = reinterpret_cast<Node*>(child_page->get_data());
-                    left_slot = child_slot;
-                    neighboor_page = right_neighboor_page;
-                    buffer_manager.unfix_page(*left_neighboor_page, false);
-                }
-                else {
-                    right_node = reinterpret_cast<Node*>(child_page->get_data());
-                    left_slot = child_slot-1;
-                    neighboor_page = left_neighboor_page;
-                    buffer_manager.unfix_page(*right_neighboor_page, false);
-                }
+                right_node = reinterpret_cast<Node*>(child_page->get_data());
+                left_slot = child_slot-1;
+                neighboor_page = left_neighboor_page;
+                buffer_manager.unfix_page(*right_neighboor_page, false);
             }
-            uint16_t total_count = left_node->count + right_node->count;
-            uint16_t max_count = left_node->is_leaf() ? LeafNode::max_values() : InnerNode::max_children();
-            if (total_count <= max_count) {
-                // if parent has only these two children, we can merge them into parent.
-                // This is possible only if the parent is the root node.
-                if (parent->count == 2) {
-                    if (left_node->is_leaf()) {
-                        LeafNode *left_node_as_leaf = static_cast<LeafNode*>(left_node),
-                                 *right_node_as_leaf = static_cast<LeafNode*>(right_node);
-                        // turn parent into leaf node
-                        parent->level = 0;
-                        LeafNode *parent_as_leaf = reinterpret_cast<LeafNode*>(parent);
-                        parent_as_leaf->count = left_node->count + right_node->count;
-                        for (uint16_t i=0; i<left_node->count; ++i) {
-                            parent_as_leaf->keys[i] = left_node_as_leaf->keys[i];
-                            parent_as_leaf->values[i] = left_node_as_leaf->values[i];
-                        }
-                        for (uint16_t i=0; i<right_node->count; ++i) {
-                            parent_as_leaf->keys[i+left_node->count] = right_node_as_leaf->keys[i];
-                            parent_as_leaf->values[i+left_node->count] = right_node_as_leaf->values[i];
-                        }
-                    }
-                    else {
-                        InnerNode *left_node_as_inner = static_cast<InnerNode*>(left_node),
-                                  *right_node_as_inner = static_cast<InnerNode*>(right_node);
-                        --parent->level; // decrement parent's level
-                        parent->count = left_node->count + right_node->count;
-                        parent->keys[left_node->count-1] = parent->keys[0]; // move the old separator to the middle
-                        for (uint16_t i=0; i<left_node->count-1; ++i) {
-                            parent->keys[i] = left_node_as_inner->keys[i];
-                            parent->children[i] = left_node_as_inner->children[i];
-                        }
-                        parent->children[left_node->count-1] = left_node_as_inner->children[left_node->count-1]; // move last child from the left node
-                        for (uint16_t i=0; i<right_node->count-1; ++i) {
-                            parent->keys[i+left_node->count] = right_node_as_inner->keys[i];
-                            parent->children[i+left_node->count] = right_node_as_inner->children[i];
-                        }
-                        parent->children[parent->count-1] = right_node_as_inner->children[right_node->count-1]; // move last child from the right node
-                    }
-                    // TODO: push these pages to list of free pages
-                    buffer_manager.unfix_page(*child_page, false);
-                    buffer_manager.unfix_page(*neighboor_page, false);
-                    return parent_page;
-                }
-                else {
-                    // regular merge
-                    if (left_node->is_leaf()) {
-                        LeafNode *left_node_as_leaf = static_cast<LeafNode*>(left_node),
-                                 *right_node_as_leaf = static_cast<LeafNode*>(right_node);
-                        for (uint16_t i=0; i<right_node->count; ++i) {
-                            left_node_as_leaf->keys[i+left_node->count] = right_node_as_leaf->keys[i];
-                            left_node_as_leaf->values[i+left_node->count] = right_node_as_leaf->values[i];
-                        }
-                    }
-                    else {
-                        InnerNode *left_node_as_inner = static_cast<InnerNode*>(left_node),
-                                 *right_node_as_inner = static_cast<InnerNode*>(right_node);
-                        for (uint16_t i=0; i<right_node->count; ++i) {
-                            left_node_as_inner->keys[i+left_node->count-1] = right_node_as_inner->keys[i];
-                            left_node_as_inner->children[i+left_node->count] = right_node_as_inner->children[i];
-                        } 
-                    }
-                    left_node->count += right_node->count;
-                    parent->keys[left_slot] = parent->keys[left_slot+1];
-                    // for (uint16_t i=left_slot+1; i+1<parent->count-1; ++i) {
-                    //     parent->keys[i] = parent->keys[i+1];
-                    //     parent->children[i] = parent->children[i+1];
-                    // }
-                    // parent->children[parent->count-2] = parent->children[parent->count-1];
-                    // --parent->count;
-                    parent->erase(left_slot+1);
-                    buffer_manager.unfix_page(*parent_page, true);
-                    if (left_slot==child_slot) {
-                        buffer_manager.unfix_page(*neighboor_page, false);
-                        // TODO: push neighboor_page to the list of free page
-                        return child_page;
-                    }
-                    else {
-                        // TODO: push child_page to the list of free page
-                        buffer_manager.unfix_page(*child_page, false);
-                        return neighboor_page;
-                    }
-                }
-            }
-            // merge not possible, rebalance
-            KeyT &new_separator = parent->keys[left_slot];
-            if (left_node->count > right_node->count) {
-                // shift from left to right
-                uint16_t to_shift = (left_node->count-right_node->count)/2; // shift half the difference
+        }
+        uint16_t total_count = left_node->count + right_node->count;
+        uint16_t max_count = left_node->is_leaf() ? LeafNode::max_values() : InnerNode::max_children();
+        if (total_count <= max_count) {
+            // if parent has only these two children, we can merge them into parent.
+            // This is possible only if the parent is the root node.
+            if (parent->count == 2) {
                 if (left_node->is_leaf()) {
                     LeafNode *left_node_as_leaf = static_cast<LeafNode*>(left_node),
-                             *right_node_as_leaf = static_cast<LeafNode*>(right_node);
-                    // make space for keys and values from the left
-                    for (uint16_t i=right_node->count; i>0;) {
-                        --i;
-                        right_node_as_leaf->keys[i+to_shift] = right_node_as_leaf->keys[i];
-                        right_node_as_leaf->values[i+to_shift] = right_node_as_leaf->values[i];
+                                *right_node_as_leaf = static_cast<LeafNode*>(right_node);
+                    // turn parent into leaf node
+                    parent->level = 0;
+                    LeafNode *parent_as_leaf = reinterpret_cast<LeafNode*>(parent);
+                    parent_as_leaf->count = left_node->count + right_node->count;
+                    for (uint16_t i=0; i<left_node->count; ++i) {
+                        parent_as_leaf->keys[i] = left_node_as_leaf->keys[i];
+                        parent_as_leaf->values[i] = left_node_as_leaf->values[i];
                     }
-                    for (uint16_t i=0, pos=left_node->count-to_shift; i<to_shift; ++i) {
-                        right_node_as_leaf->keys[i] = left_node_as_leaf->keys[pos+i];
-                        right_node_as_leaf->values[i] = left_node_as_leaf->values[pos+i];
+                    for (uint16_t i=0; i<right_node->count; ++i) {
+                        parent_as_leaf->keys[i+left_node->count] = right_node_as_leaf->keys[i];
+                        parent_as_leaf->values[i+left_node->count] = right_node_as_leaf->values[i];
                     }
-                    new_separator = left_node_as_leaf->keys[left_node->count-to_shift-1];
                 }
                 else {
                     InnerNode *left_node_as_inner = static_cast<InnerNode*>(left_node),
-                             *right_node_as_inner = static_cast<InnerNode*>(right_node);
-                    // make space for keys and values from the left
-                    for (uint16_t i=right_node->count; i>0;) {
-                        --i;
-                        right_node_as_inner->keys[i+to_shift] = right_node_as_inner->keys[i];
-                        right_node_as_inner->children[i+to_shift] = right_node_as_inner->children[i];
+                                *right_node_as_inner = static_cast<InnerNode*>(right_node);
+                    --parent->level; // decrement parent's level
+                    parent->count = left_node->count + right_node->count;
+                    parent->keys[left_node->count-1] = parent->keys[0]; // move the old separator to the middle
+                    for (uint16_t i=0; i<left_node->count-1; ++i) {
+                        parent->keys[i] = left_node_as_inner->keys[i];
+                        parent->children[i] = left_node_as_inner->children[i];
                     }
-                    right_node_as_inner->keys[to_shift-1] = parent->keys[left_slot]; // move old separator from parent
-                    right_node_as_inner->children[to_shift-1] = left_node_as_inner->children[left_node->count-1]; // move rightmost child of left node
-                    for (uint16_t i=0, pos=left_node->count-to_shift; i<to_shift-1; ++i) {
-                        right_node_as_inner->keys[i] = left_node_as_inner->keys[pos+i];
-                        right_node_as_inner->children[i] = left_node_as_inner->children[pos+i];
+                    parent->children[left_node->count-1] = left_node_as_inner->children[left_node->count-1]; // move last child from the left node (pairs with old seperator)
+                    for (uint16_t i=0; i<right_node->count-1; ++i) {
+                        parent->keys[i+left_node->count] = right_node_as_inner->keys[i];
+                        parent->children[i+left_node->count] = right_node_as_inner->children[i];
                     }
-                    new_separator = right_node_as_inner->keys[left_node->count-to_shift-1];
+                    parent->children[parent->count-1] = right_node_as_inner->children[right_node->count-1]; // move last child from the right node
                 }
-                left_node->count-=to_shift;
-                right_node->count+=to_shift;
+                // TODO: push these pages to list of free pages
+                buffer_manager.unfix_page(*child_page, false);
+                buffer_manager.unfix_page(*neighboor_page, false);
+                return parent_page;
             }
             else {
-                // shift from right to left
-                uint16_t to_shift = (right_node->count-left_node->count)/2; // shift half the difference
+                // regular merge
                 if (left_node->is_leaf()) {
                     LeafNode *left_node_as_leaf = static_cast<LeafNode*>(left_node),
-                             *right_node_as_leaf = static_cast<LeafNode*>(right_node);
-                    for (uint16_t i=0; i<to_shift; ++i) {
+                                *right_node_as_leaf = static_cast<LeafNode*>(right_node);
+                    for (uint16_t i=0; i<right_node->count; ++i) {
                         left_node_as_leaf->keys[i+left_node->count] = right_node_as_leaf->keys[i];
                         left_node_as_leaf->values[i+left_node->count] = right_node_as_leaf->values[i];
                     }
-                    for (uint16_t i=0; i<right_node->count-to_shift; ++i) {
-                        right_node_as_leaf->keys[i] = right_node_as_leaf->keys[i+to_shift];
-                        right_node_as_leaf->values[i] = right_node_as_leaf->values[i+to_shift];
-                    }
-                    new_separator = left_node_as_leaf->keys[left_node->count+to_shift-1];
                 }
                 else {
                     InnerNode *left_node_as_inner = static_cast<InnerNode*>(left_node),
-                             *right_node_as_inner = static_cast<InnerNode*>(right_node);
-                    // move key from parent
+                                *right_node_as_inner = static_cast<InnerNode*>(right_node);
                     left_node_as_inner->keys[left_node->count-1] = parent->keys[left_slot];
-                    // move to_shift-1 keys and children from right to left
-                    for (uint16_t i=0; i<to_shift-1; ++i) {
+                    for (uint16_t i=0; i<right_node->count-1; ++i) {
                         left_node_as_inner->keys[i+left_node->count] = right_node_as_inner->keys[i];
                         left_node_as_inner->children[i+left_node->count] = right_node_as_inner->children[i];
                     }
-                    // move the last child from left to right
-                    left_node_as_inner->children[left_node->count+to_shift-1] = right_node_as_inner->children[to_shift-1];
-                    // make the new "first" key from left node the new separator
-                    new_separator = right_node_as_inner->keys[to_shift-1];
-                    for (uint16_t i=0; i<right_node->count-to_shift; ++i) {
-                        right_node_as_inner->keys[i] = right_node_as_inner->keys[i+to_shift];
-                        right_node_as_inner->children[i] = right_node_as_inner->children[i+to_shift];
-                    }
+                    left_node_as_inner->children[left_node->count+right_node->count-1] = right_node_as_inner->children[right_node->count-1];
                 }
-                left_node->count+=to_shift;
-                right_node->count-=to_shift;
-            }
-            buffer_manager.unfix_page(*parent_page, true);
-            if (target <= new_separator) {
-                if (left_slot == child_slot) {
-                    buffer_manager.unfix_page(*neighboor_page, true);
+                left_node->count += right_node->count;
+                parent->keys[left_slot] = parent->keys[left_slot+1];
+                // for (uint16_t i=left_slot+1; i+1<parent->count-1; ++i) {
+                //     parent->keys[i] = parent->keys[i+1];
+                //     parent->children[i] = parent->children[i+1];
+                // }
+                // parent->children[parent->count-2] = parent->children[parent->count-1];
+                // --parent->count;
+                parent->erase(left_slot+1);
+                buffer_manager.unfix_page(*parent_page, true);
+                if (left_slot==child_slot) {
+                    buffer_manager.unfix_page(*neighboor_page, false);
+                    // TODO: push neighboor_page to the list of free page
                     return child_page;
                 }
                 else {
-                    buffer_manager.unfix_page(*child_page, true);
+                    // TODO: push child_page to the list of free page
+                    buffer_manager.unfix_page(*child_page, false);
                     return neighboor_page;
-                }
-            }
-            else {
-                if (left_slot == child_slot) {
-                    buffer_manager.unfix_page(*child_page, true);
-                    return neighboor_page;
-                }
-                else {
-                    buffer_manager.unfix_page(*neighboor_page, true);
-                    return child_page;
                 }
             }
         }
+        // merge not possible, rebalance
+        KeyT new_separator;
+        if (left_node->count > right_node->count) {
+            // shift from left to right
+            uint16_t to_shift = (left_node->count-right_node->count)/2; // shift half the difference
+            if (left_node->is_leaf()) {
+                LeafNode *left_node_as_leaf = static_cast<LeafNode*>(left_node),
+                            *right_node_as_leaf = static_cast<LeafNode*>(right_node);
+                // make space for keys and values from the left
+                for (uint16_t i=right_node->count; i>0;) {
+                    --i;
+                    right_node_as_leaf->keys[i+to_shift] = right_node_as_leaf->keys[i];
+                    right_node_as_leaf->values[i+to_shift] = right_node_as_leaf->values[i];
+                }
+                for (uint16_t i=0, pos=left_node->count-to_shift; i<to_shift; ++i) {
+                    right_node_as_leaf->keys[i] = left_node_as_leaf->keys[pos+i];
+                    right_node_as_leaf->values[i] = left_node_as_leaf->values[pos+i];
+                }
+                new_separator = left_node_as_leaf->keys[left_node->count-to_shift-1];
+            }
+            else {
+                InnerNode *left_node_as_inner = static_cast<InnerNode*>(left_node),
+                            *right_node_as_inner = static_cast<InnerNode*>(right_node);
+                // make space for keys and values from the left
+                for (uint16_t i=right_node->count; i>0;) {
+                    --i;
+                    right_node_as_inner->keys[i+to_shift] = right_node_as_inner->keys[i];
+                    right_node_as_inner->children[i+to_shift] = right_node_as_inner->children[i];
+                }
+                right_node_as_inner->keys[to_shift-1] = parent->keys[left_slot]; // move old separator from parent
+                right_node_as_inner->children[to_shift-1] = left_node_as_inner->children[left_node->count-1]; // move rightmost child of left node
+                for (uint16_t i=0, pos=left_node->count-to_shift; i<to_shift-1; ++i) {
+                    right_node_as_inner->keys[i] = left_node_as_inner->keys[pos+i];
+                    right_node_as_inner->children[i] = left_node_as_inner->children[pos+i];
+                }
+                new_separator = right_node_as_inner->keys[left_node->count-to_shift-1];
+            }
+            left_node->count-=to_shift;
+            right_node->count+=to_shift;
+        }
+        else {
+            // shift from right to left
+            uint16_t to_shift = (right_node->count-left_node->count)/2; // shift half the difference
+            if (left_node->is_leaf()) {
+                LeafNode *left_node_as_leaf = static_cast<LeafNode*>(left_node),
+                            *right_node_as_leaf = static_cast<LeafNode*>(right_node);
+                for (uint16_t i=0; i<to_shift; ++i) {
+                    left_node_as_leaf->keys[i+left_node->count] = right_node_as_leaf->keys[i];
+                    left_node_as_leaf->values[i+left_node->count] = right_node_as_leaf->values[i];
+                }
+                for (uint16_t i=0; i<right_node->count-to_shift; ++i) {
+                    right_node_as_leaf->keys[i] = right_node_as_leaf->keys[i+to_shift];
+                    right_node_as_leaf->values[i] = right_node_as_leaf->values[i+to_shift];
+                }
+                new_separator = left_node_as_leaf->keys[left_node->count+to_shift-1];
+            }
+            else {
+                InnerNode *left_node_as_inner = static_cast<InnerNode*>(left_node),
+                            *right_node_as_inner = static_cast<InnerNode*>(right_node);
+                // move key from parent
+                left_node_as_inner->keys[left_node->count-1] = parent->keys[left_slot];
+                // move to_shift-1 keys and children from right to left
+                for (uint16_t i=0; i<to_shift-1; ++i) {
+                    left_node_as_inner->keys[i+left_node->count] = right_node_as_inner->keys[i];
+                    left_node_as_inner->children[i+left_node->count] = right_node_as_inner->children[i];
+                }
+                // move the last child from left to right
+                left_node_as_inner->children[left_node->count+to_shift-1] = right_node_as_inner->children[to_shift-1];
+                // make the new "first" key from left node the new separator
+                new_separator = right_node_as_inner->keys[to_shift-1];
+                for (uint16_t i=0; i<right_node->count-to_shift; ++i) {
+                    right_node_as_inner->keys[i] = right_node_as_inner->keys[i+to_shift];
+                    right_node_as_inner->children[i] = right_node_as_inner->children[i+to_shift];
+                }
+            }
+            left_node->count+=to_shift;
+            right_node->count-=to_shift;
+        }
+        parent->keys[left_slot] = new_separator;
+        buffer_manager.unfix_page(*parent_page, true);
+        if (target <= new_separator) {
+            if (left_slot == child_slot) {
+                buffer_manager.unfix_page(*neighboor_page, true);
+                return child_page;
+            }
+            else {
+                buffer_manager.unfix_page(*child_page, true);
+                return neighboor_page;
+            }
+        }
+        else {
+            if (left_slot == child_slot) {
+                buffer_manager.unfix_page(*child_page, true);
+                return neighboor_page;
+            }
+            else {
+                buffer_manager.unfix_page(*neighboor_page, true);
+                return child_page;
+            }
+        }
+    }
     
 };
     
