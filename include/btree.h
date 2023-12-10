@@ -459,8 +459,8 @@ struct BTree : public Segment {
                     &right_swip = parent->children[child_slot+1];
                 BufferFrame *left_neighboor_page = &buffer_manager.fix_page(left_swip, true),
                             *right_neighboor_page = &buffer_manager.fix_page(right_swip, true);
-                left_node = reinterpret_cast<Node*>(left_neighboor_page);
-                right_node = reinterpret_cast<Node*>(right_neighboor_page);
+                left_node = reinterpret_cast<Node*>(left_neighboor_page->get_data());
+                right_node = reinterpret_cast<Node*>(right_neighboor_page->get_data());
                 if (left_node->count > right_node->count) {
                     left_node = reinterpret_cast<Node*>(child_page->get_data());
                     left_slot = child_slot;
