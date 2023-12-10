@@ -1,6 +1,41 @@
-# Guided Research
+# Optimizing B+ tree Node Layout for Improved Search Performance Using SIMD Instructions
 
+## Project description
+### Goal of the Research
+The goal of this research is to enhance the performance of B+ tree structures, commonly used in
+database systems, by optimizing the layout of B+ tree nodes and leveraging Single Instruction,
+Multiple Data (SIMD) instructions to accelerate search operations. By adopting an implicit $n$-ary
+tree layout and aligning it with SIMD capabilities, we aim to improve the efficiency of B+ tree-based data retrieval.
 
+### Introduction
+B+ trees are vital in computer science, especially within database systems, where they efficiently
+index large datasets. Their balanced hierarchical structure enables swift data access, essential for
+optimizing database query performance. However, conventional B+ tree node implementations
+face challenges. Using sorted arrays for key storage and employing binary search during lookup
+operations leads to random access patterns, hindering efficient cache utilization. Additionally, the lack of temporal locality, with most frequently accessed keys scattered across different cache lines, poses a performance problem. Finally, modern hardware supports parallel comparisons, a feature that cannot be fully utilized in a conventional sorted array setup. These issues highlight the need for an improved node implementation to enhance B+ tree efficiency.
+
+### Proposed Modifications and Their Implications
+In this research, we explore an alternative approach to optimize the layout of B+ tree nodes. Just as B+ trees were initially devised to handle latency disparities between disk and main memory, our goal is to redesign B+ tree nodes to be cache-conscious and fully leverage the SIMD capabilities of modern processors. Our approach adopts a static, pointer-free tree layout, akin to Eytzinger layout used in common binary heap implementations. The key consideration is selecting an optimal maximum number of children, denoted as $n$, in such a way that $n-1$ (the number of keys) aligns with the maximal capacity of SIMD compare instructions supported by the target machine. This alignment would enable the execution of $n−1$ comparisons in a single SIMD instruction, potentially leading to performance gains.
+
+Additionally, this modified layout offers another potential advantage — improved temporal
+locality. By arranging nodes inside a single page based on their depth within a tree and ensuring
+proper alignment, they can be grouped to fit into a single cache line. This arrangement enhances
+cache coherency, potentially reducing cache misses during search operations and improving search
+performance.
+
+While this layout offers theoretical prospect of performance improvements, our research will
+include comprehensive empirical measurements on modern hardware to assess the actual practical
+impact of these modifications accurately.
+
+### Practical importance
+Optimizing B+ tree structures for efficient data retrieval has substantial real-world implications,
+particularly in the domain of database systems. If our approach proves successful in enabling
+faster search operations within nodes, it could significantly enhance query execution speed, thereby improving the overall efficiency of database operations. Furthermore, faster search might offer
+an opportunity to accommodate larger page sizes, potentially leading to even better performance
+outcomes. In today’s data-driven world, where databases underpin a wide range of applications,
+from web services to enterprise solutions, any enhancement in database efficiency holds significant practical value.
+
+# README Template
 
 ## Getting started
 
