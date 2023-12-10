@@ -2,6 +2,7 @@
 #define INCLUDE_BTREE_H
 
 #include <type_traits>
+#include <forward_list>
 
 #include "buffer_manager.h"
 #include "segment.h"
@@ -239,14 +240,20 @@ struct BTree : public Segment {
         }
     };
 
+    
+
     /// The root.
     Swip root;
     /// The next free page;
-    std::atomic_uint64_t next_available_page;
+    std::atomic_uint64_t used_pages_count;
+    /// Pages to be reused
+    std::forward_list<BufferFrame*> free_pages;
+    /// Mutex for free_pages
+    std::mutex free_pages_mutex;
 
     /// Constructor.
     BTree(uint16_t segment_id, BufferManager &buffer_manager)
-        : Segment(segment_id, buffer_manager), root(BufferManager::get_page_id(segment_id, 0)), next_available_page(0) {
+        : Segment(segment_id, buffer_manager), root(BufferManager::get_page_id(segment_id, 1)), used_pages_count(1) {
         
         auto &page = buffer_manager.fix_page(root, true);
         new (page.get_data()) LeafNode();
@@ -426,21 +433,17 @@ struct BTree : public Segment {
     }
 
     protected:
-    inline Swip next_page_id() {
-        Swip swip (buffer_manager.get_page_id(segment_id, next_available_page++));
-        return swip;
-    }
-
-    /// @brief allocates a new node and locks it exclusively
-    /// @tparam node type
-    /// @return pointer to allocated node
-    template<typename T>
-    requires std::is_base_of_v<Node, T>
-    T* allocate_node() {
-        auto id = ++next_available_page;
-        Swip swip ((static_cast<uint64_t>(segment_id) << 48) ^ id);
-        auto &page = buffer_manager.fix_page(swip, true);
-        return new (page.get_data()) T();
+    Swip next_page_id() {
+        std::lock_guard lock(free_pages_mutex);
+        if (free_pages.empty()) {
+            Swip swip (buffer_manager.get_page_id(segment_id, used_pages_count++));
+            return swip;
+        }
+        else {
+            Swip swip = Swip(free_pages.front());
+            free_pages.pop_front();
+            return swip;
+        }
     }
 
     BufferFrame* merge(BufferFrame *parent_page, BufferFrame *child_page, uint16_t child_slot, KeyT target) {
@@ -527,9 +530,14 @@ struct BTree : public Segment {
                     }
                     parent->children[parent->count-1] = right_node_as_inner->children[right_node->count-1]; // move last child from the right node
                 }
-                // TODO: push these pages to list of free pages
                 buffer_manager.unfix_page(*child_page, false);
                 buffer_manager.unfix_page(*neighboor_page, false);
+                // enable later reuse of these frames
+                {
+                    std::lock_guard lock(free_pages_mutex);
+                    free_pages.push_front(child_page);
+                    free_pages.push_front(neighboor_page);
+                }
                 return parent_page;
             }
             else {
@@ -558,12 +566,14 @@ struct BTree : public Segment {
                 buffer_manager.unfix_page(*parent_page, true);
                 if (left_slot==child_slot) {
                     buffer_manager.unfix_page(*neighboor_page, false);
-                    // TODO: push neighboor_page to the list of free page
+                    std::lock_guard lock(free_pages_mutex);
+                    free_pages.push_front(neighboor_page);
                     return child_page;
                 }
                 else {
-                    // TODO: push child_page to the list of free page
                     buffer_manager.unfix_page(*child_page, false);
+                    std::lock_guard lock(free_pages_mutex);
+                    free_pages.push_front(child_page);
                     return neighboor_page;
                 }
             }
