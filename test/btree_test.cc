@@ -310,7 +310,7 @@ TEST(BTreeTest, LookupMultipleSplitsIncreasing) {
 TEST(BTreeTest, LookupMultipleSplitsDecreasing) {
     BufferManager buffer_manager(1024, 1000);
     BTree tree(0, buffer_manager);
-    auto n = 10 * BTree::LeafNode::kCapacity;
+    auto n = 100 * BTree::LeafNode::kCapacity;
 
     // Insert values
     for (auto i = n; i > 0; --i) {
@@ -334,7 +334,7 @@ TEST(BTreeTest, LookupMultipleSplitsDecreasing) {
 TEST(BTreeTest, LookupRandomNonRepeating) {
     BufferManager buffer_manager(1024, 1000);
     BTree tree(0, buffer_manager);
-    auto n = 10 * BTree::LeafNode::kCapacity;
+    auto n = 100 * BTree::LeafNode::kCapacity;
 
     // Generate random non-repeating key sequence
     std::vector<uint64_t> keys(n);
@@ -401,13 +401,13 @@ TEST(BTreeTest, EraseIncreasing) {
     BTree tree(0, buffer_manager);
 
     // Insert values
-    for (auto i = 0ul; i < 4 * BTree::LeafNode::kCapacity; ++i) {
+    for (auto i = 0ul; i < 64 * BTree::LeafNode::kCapacity; ++i) {
         tree.insert(i, 2 * i);
     }
 
     // Iteratively erase all values in ascending order
     // Here the left node will always either soak the right sibling or take part of its keys 
-    for (auto i = 0ul; i < 4 * BTree::LeafNode::kCapacity; ++i) {
+    for (auto i = 0ul; i < 64 * BTree::LeafNode::kCapacity; ++i) {
         ASSERT_TRUE(tree.lookup(i))
             << "k=" << i << " was not in the tree";
         tree.erase(i);
@@ -422,12 +422,12 @@ TEST(BTreeTest, EraseDecreasing) {
     BTree tree(0, buffer_manager);
 
     // Insert values
-    for (auto i = 1ul; i <= 4 * BTree::LeafNode::kCapacity; ++i) {
+    for (auto i = 1ul; i <= 64 * BTree::LeafNode::kCapacity; ++i) {
         tree.insert(i, 2 * i);
     }
 
     // Iteratively erase all values in descending order
-    for (auto i = 4 * BTree::LeafNode::kCapacity; i > 0; --i) {
+    for (auto i = 64 * BTree::LeafNode::kCapacity; i > 0; --i) {
         ASSERT_TRUE(tree.lookup(i))
             << "k=" << i << " was not in the tree";
         tree.erase(i);
@@ -439,7 +439,7 @@ TEST(BTreeTest, EraseDecreasing) {
 TEST(BTreeTest, RandomErase) {
     BufferManager buffer_manager(1024, 1000);
     BTree tree(0, buffer_manager);
-    auto n = 10 * BTree::LeafNode::kCapacity;
+    auto n = 64 * BTree::LeafNode::kCapacity;
     // Insert n keys
     std::vector<uint64_t> keys(n);
     for (auto i=0u; i<n; ++i) {
@@ -469,8 +469,8 @@ TEST(BTreeTest, MultithreadWriters) {
     threads.reserve(thread_count);
     for (size_t thread = 0; thread < thread_count; ++thread) {
         threads.emplace_back([thread, &sync_point, &tree] {
-            size_t startValue = thread * 2 * BTree::LeafNode::kCapacity;
-            size_t limit = startValue + 2 * BTree::LeafNode::kCapacity;
+            size_t startValue = thread * 8 * BTree::LeafNode::kCapacity;
+            size_t limit = startValue + 8 * BTree::LeafNode::kCapacity;
             // Insert values
             for (auto i = startValue; i < limit; ++i) {
                 tree.insert(i, 2 * i);
