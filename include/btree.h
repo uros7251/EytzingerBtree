@@ -418,7 +418,7 @@ struct BTree : public Segment {
             child = reinterpret_cast<Node*>(child_page->get_data());
         }
         LeafNode *leaf = static_cast<LeafNode*>(child);
-        bool success = leaf->erase(key);
+        leaf->erase(key);
         buffer_manager.unfix_page(*child_page, true);
     }
 
@@ -551,12 +551,6 @@ struct BTree : public Segment {
                 }
                 left_node->count += right_node->count;
                 parent->keys[left_slot] = parent->keys[left_slot+1];
-                // for (uint16_t i=left_slot+1; i+1<parent->count-1; ++i) {
-                //     parent->keys[i] = parent->keys[i+1];
-                //     parent->children[i] = parent->children[i+1];
-                // }
-                // parent->children[parent->count-2] = parent->children[parent->count-1];
-                // --parent->count;
                 parent->erase(left_slot+1);
                 buffer_manager.unfix_page(*parent_page, true);
                 if (left_slot==child_slot) {
@@ -606,7 +600,7 @@ struct BTree : public Segment {
                     right_node_as_inner->keys[i] = left_node_as_inner->keys[pos+i];
                     right_node_as_inner->children[i] = left_node_as_inner->children[pos+i];
                 }
-                new_separator = right_node_as_inner->keys[left_node->count-to_shift-1];
+                new_separator = left_node_as_inner->keys[left_node->count-to_shift-1];
             }
             left_node->count-=to_shift;
             right_node->count+=to_shift;
