@@ -405,6 +405,8 @@ TEST(BTreeTest, EraseIncreasing) {
         tree.insert(i, 2 * i);
     }
 
+    auto pages_used = tree.used_pages_count.load();
+
     // Iteratively erase all values in ascending order
     // Here the left node will always either soak the right sibling or take part of its keys 
     for (auto i = 0ul; i < 64 * BTree::LeafNode::kCapacity; ++i) {
@@ -414,6 +416,13 @@ TEST(BTreeTest, EraseIncreasing) {
         ASSERT_FALSE(tree.lookup(i))
             << "k=" << i << " was not removed from the tree";
     }
+
+    // Insert values
+    for (auto i = 0ul; i < 64 * BTree::LeafNode::kCapacity; ++i) {
+        tree.insert(i, 2 * i);
+    }
+    // Reuse pages
+    ASSERT_EQ(tree.used_pages_count.load(), pages_used); 
 }
 
 // NOLINTNEXTLINE
