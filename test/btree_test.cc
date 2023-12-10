@@ -396,17 +396,18 @@ TEST(BTreeTest, LookupRandomRepeating) {
 }
 
 // NOLINTNEXTLINE
-TEST(BTreeTest, Erase) {
+TEST(BTreeTest, EraseIncreasing) {
     BufferManager buffer_manager(1024, 1000);
     BTree tree(0, buffer_manager);
 
     // Insert values
-    for (auto i = 0ul; i < 2 * BTree::LeafNode::kCapacity; ++i) {
+    for (auto i = 0ul; i < 4 * BTree::LeafNode::kCapacity; ++i) {
         tree.insert(i, 2 * i);
     }
 
-    // Iteratively erase all values
-    for (auto i = 0ul; i < 2 * BTree::LeafNode::kCapacity; ++i) {
+    // Iteratively erase all values in ascending order
+    // Here the left node will always either soak the right sibling or take part of its keys 
+    for (auto i = 0ul; i < 4 * BTree::LeafNode::kCapacity; ++i) {
         ASSERT_TRUE(tree.lookup(i))
             << "k=" << i << " was not in the tree";
         tree.erase(i);
@@ -415,35 +416,96 @@ TEST(BTreeTest, Erase) {
     }
 }
 
+// NOLINTNEXTLINE
+TEST(BTreeTest, EraseDecreasing) {
+    BufferManager buffer_manager(1024, 1000);
+    BTree tree(0, buffer_manager);
+
+    // Insert values
+    for (auto i = 1ul; i <= 4 * BTree::LeafNode::kCapacity; ++i) {
+        tree.insert(i, 2 * i);
+    }
+
+    // Iteratively erase all values in descending order
+    for (auto i = 4 * BTree::LeafNode::kCapacity; i > 0; --i) {
+        ASSERT_TRUE(tree.lookup(i))
+            << "k=" << i << " was not in the tree";
+        tree.erase(i);
+        ASSERT_FALSE(tree.lookup(i))
+            << "k=" << i << " was not removed from the tree";
+    }
+}
+
+TEST(BTreeTest, RandomErase) {
+    BufferManager buffer_manager(1024, 1000);
+    BTree tree(0, buffer_manager);
+    auto n = 10 * BTree::LeafNode::kCapacity;
+    // Insert n keys
+    std::vector<uint64_t> keys(n);
+    for (auto i=0u; i<n; ++i) {
+        keys[i] = i;
+        tree.insert(i, 2*i);
+    }
+    // Erase them in random order
+    for (auto i=n; i>0; --i) {
+        auto j = rand() % i;
+        auto k = keys[j];
+        ASSERT_TRUE(tree.lookup(k))
+            << "k=" << k << " was not in the tree";
+        tree.erase(k);
+        ASSERT_FALSE(tree.lookup(k))
+            << "k=" << k << " was not removed from the tree";
+        if (j != i-1) std::swap(keys[j], keys[i-1]);
+    }
+}
+
 TEST(BTreeTest, MultithreadWriters) {
-   BufferManager buffer_manager(1024, 1000);
-   BTree tree(0, buffer_manager);
-   
-   std::barrier sync_point(4);
-   std::vector<std::thread> threads;
-   for (size_t thread = 0; thread < 4; ++thread) {
-      threads.emplace_back([thread, &sync_point, &tree] {
-         size_t startValue = thread * 2 * BTree::LeafNode::kCapacity;
-         size_t limit = startValue + 2 * BTree::LeafNode::kCapacity;
-         // Insert values
-         for (auto i = startValue; i < limit; ++i) {
-            tree.insert(i, 2 * i);
-         }
-         
-         sync_point.arrive_and_wait();
-         
-         // And read them back
-         for (auto i = startValue; i < limit; ++i) {
-            auto res = tree.lookup(i);
-            ASSERT_TRUE(res)
-                << "k=" << i << " was not in the tree!";
-            ASSERT_TRUE(*res == 2 * i)
-                << "k=" << i << " should have value " << 2*i;
-         }
-      });
-   }
-   for (auto& t : threads)
-      t.join();
+    BufferManager buffer_manager(1024, 1000);
+    BTree tree(0, buffer_manager);
+    
+    auto thread_count = std::thread::hardware_concurrency();
+    std::barrier sync_point(thread_count);
+    std::vector<std::thread> threads;
+    threads.reserve(thread_count);
+    for (size_t thread = 0; thread < thread_count; ++thread) {
+        threads.emplace_back([thread, &sync_point, &tree] {
+            size_t startValue = thread * 2 * BTree::LeafNode::kCapacity;
+            size_t limit = startValue + 2 * BTree::LeafNode::kCapacity;
+            // Insert values
+            for (auto i = startValue; i < limit; ++i) {
+                tree.insert(i, 2 * i);
+            }
+            
+            sync_point.arrive_and_wait();
+            
+            // Read them back
+            for (auto i = startValue; i < limit; ++i) {
+                auto res = tree.lookup(i);
+                ASSERT_TRUE(res)
+                    << "k=" << i << " was not in the tree!";
+                ASSERT_TRUE(*res == 2 * i)
+                    << "k=" << i << " should have value " << 2*i;
+            }
+
+            sync_point.arrive_and_wait();
+
+            // Erase them
+            for (auto i = startValue; i < limit; ++i) {
+                tree.erase(i);
+            }
+
+            sync_point.arrive_and_wait();
+
+            // Try to read them again
+            for (auto i = startValue; i < limit; ++i) {
+                auto res = tree.lookup(i);
+                ASSERT_FALSE(res)
+                    << "k=" << i << " was not removed from the tree!";
+            }
+        });
+    }
+    for (auto& t : threads)
+        t.join();
 }
 
 }  // namespace
