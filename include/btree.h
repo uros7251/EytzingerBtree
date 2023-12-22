@@ -83,7 +83,7 @@ struct BTree : public Segment {
             // BEFORE: keys = [1, 4, 9], children = [8, 3, 13, 7]
             // AFTER: keys = [1, 3, 4, 9], children = [8, 3, 40, 13, 7]
 
-            if (Node::count-1 == InnerNode::kCapacity) throw std::runtime_error("insert_split(): Not enough space!");
+            assert(Node::count-1 != InnerNode::kCapacity);
             auto [index, _] = lower_bound(key); // find index to insert key
             for (uint32_t i=Node::count-1; i>index; --i) {
                 keys[i] = keys[i-1];
@@ -94,9 +94,10 @@ struct BTree : public Segment {
             Node::count++;
         }
 
-        /// @brief Erases a key and assosiacted child
-        /// @param index Index of the key and child to be erased
+        /// @brief Erases a key and an assosiacted child
+        /// @param index Index of the key and the child to be erased
         void erase(uint16_t index) {
+            assert(Node::count > 0);
             if (index < Node::count-1u) {
                 for (uint32_t i=index; i+2u<Node::count; ++i) {
                     keys[i] = keys[i+1];
