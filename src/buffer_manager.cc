@@ -34,29 +34,18 @@ BufferManager::BufferManager(size_t page_size, size_t page_count)
 BufferManager::~BufferManager() = default;
 
 
-BufferFrame& BufferManager::fix_page(Swip& swip, bool exclusive) {
+void BufferManager::fix_page_slow(Swip& swip) {
+   // cold access, take the global lock
+   std::lock_guard<std::mutex> lock {bm_lock};
+   // check again if the page was not swizzled in the meantime by another thread
    if (swip.isUNSWIZZLED()) {
-      // cold access, take the global lock
-      std::lock_guard<std::mutex> lock {bm_lock};
-      // check again if the page was not swizzled in the meantime by another thread
-      if (swip.isUNSWIZZLED()) {
-         if (frames.size() >= page_count) {
-            throw buffer_full_error();
-         }
-         auto &bf = frames.emplace_back(swip.asPageID());
-         bf.data.resize(page_size, 0);
-         swip.warm(&bf);
+      if (frames.size() >= page_count) {
+         throw buffer_full_error();
       }
+      auto &bf = frames.emplace_back(swip.asPageID());
+      bf.data.resize(page_size, 0);
+      swip.warm(&bf);
    }
-   auto &bf = swip.asBufferFrame();
-   if (exclusive) {
-      bf.latch.lock();
-      bf.exclusive = true;
-   }
-   else {
-      bf.latch.lock_shared();
-   }
-   return bf;
 }
 
 

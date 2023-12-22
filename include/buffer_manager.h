@@ -43,6 +43,9 @@ class BufferManager {
    size_t page_size, page_count;
    std::vector<BufferFrame> frames;
 
+   // cold path
+   void fix_page_slow(Swip& swip);
+
    public:
    BufferManager(const BufferManager&) = delete;
    BufferManager(BufferManager&&) = delete;
@@ -72,7 +75,20 @@ class BufferManager {
    /// @param[in] exclusive If `exclusive` is true, the page is locked
    ///                      exclusively. Otherwise it is locked
    ///                      non-exclusively (shared).
-   BufferFrame& fix_page(Swip& swip, bool exclusive);
+   inline BufferFrame& fix_page(Swip& swip, bool exclusive) {
+      if (swip.isUNSWIZZLED()) {
+         fix_page_slow(swip);
+      }
+      auto &bf = swip.asBufferFrame();
+      if (exclusive) {
+         bf.latch.lock();
+         bf.exclusive = true;
+      }
+      else {
+         bf.latch.lock_shared();
+      }
+      return bf;
+   }
 
    /// Takes a `BufferFrame` reference that was returned by an earlier call to
    /// `fix_page()` and unfixes it. When `is_dirty` is / true, the page is
