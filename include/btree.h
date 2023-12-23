@@ -29,13 +29,37 @@ struct BTree : public Segment {
 
         /// Is the node a leaf node?
         bool is_leaf() const { return level == 0; }
+
+        /// Offset of member 'keys'
+        static constexpr size_t keys_offset = ((sizeof(Node)+sizeof(KeyT)-1)/sizeof(KeyT))*sizeof(KeyT); // take into account alignment requirements of KeyT
+
+        /// Get the index of the first key that is not less than than a provided key.
+        /// @param[in] key          The key that should be inserted.
+        /// @return                 The index of the first key that is not less than the provided key and boolean indicating if the key is equal.
+        std::pair<uint32_t, bool> lower_bound(const KeyT &key) {
+            const KeyT *keys = reinterpret_cast<KeyT*>(reinterpret_cast<size_t>(this)+keys_offset);
+            if ((!is_leaf() && Node::count <= 1) || (is_leaf() && Node::count==0)) return {0u, false}; // no keys
+            
+            ComparatorT less;
+            uint32_t i=0, n = Node::count-(!is_leaf());
+            // branchless binary search
+            while (n>1) {
+                auto half = n/2;
+                i += less(keys[i+half-1], key) * half; // hopefully compiler translates this to cmov
+                n -= half; // ceil(n/2)
+            }
+
+            return ((!is_leaf() && i==Node::count-2u) || (is_leaf() && i==Node::count-1u)) && less(keys[i], key) ? // check if last key is less than key
+                std::make_pair(i+1, false) : // return index one after last key
+                std::make_pair(i, keys[i] == key); 
+        }
     };
 
     struct InnerNode: public Node {
         /// Remark: it might be better to store the rightmost key to make nodes more uniform and algorithms more concise
 
         /// The capacity of a node.
-        static constexpr uint32_t kCapacity = (PageSize-sizeof(Node))/(sizeof(KeyT)+sizeof(Swip));
+        static constexpr uint32_t kCapacity = (PageSize-sizeof(Node)-sizeof(Swip))/(sizeof(KeyT)+sizeof(Swip));
 
         inline static constexpr uint32_t max_keys() { return kCapacity; }
         inline static constexpr uint32_t max_children() { return kCapacity+1; }
@@ -46,34 +70,13 @@ struct BTree : public Segment {
         Swip children[InnerNode::max_children()]; 
 
         /// Constructor.
-        InnerNode() : Node(0, 0) {}
+        InnerNode() : Node(0, 0) { assert(reinterpret_cast<size_t>(&keys[0])==reinterpret_cast<size_t>(this)+Node::keys_offset); }
         InnerNode(uint16_t level) : Node(level, 0) {}
 
         /// this method can be virtual, but we avoid that on purpose
         /// @brief check if node is less than half full
         /// @return 
         bool merge_needed() const { return Node::count < max_children()/2; } 
-
-        /// Get the index of the first key that is not less than than a provided key.
-        /// @param[in] key          The key that should be inserted.
-        /// @return                 The index of the first key that is not less than the provided key and boolean indicating if the key is equal.
-        std::pair<uint32_t, bool> lower_bound(const KeyT &key) {
-            
-            if (Node::count <= 1) return {0u, false}; // no keys
-            
-            ComparatorT less;
-            uint32_t i=0, n = Node::count-1;
-            // branchless binary search
-            while (n>1) {
-                auto half = n/2;
-                i += less(keys[i+half-1], key) * half; // hopefully compiler translates this to cmov
-                n -= half; // ceil(n/2)
-            }
-
-            return i==Node::count-2u && less(keys[i], key) ? // check if last key is less than key
-                std::make_pair(i+1, false) : // return index one after last key
-                std::make_pair(i, keys[i] == key); 
-        }
 
         /// Insert a key.
         /// @param[in] key          The key that should be inserted.
@@ -84,7 +87,7 @@ struct BTree : public Segment {
             // AFTER: keys = [1, 3, 4, 9], children = [8, 3, 40, 13, 7]
 
             assert(Node::count-1 != InnerNode::kCapacity);
-            auto [index, _] = lower_bound(key); // find index to insert key
+            auto [index, _] = Node::lower_bound(key); // find index to insert key
             for (uint32_t i=Node::count-1; i>index; --i) {
                 keys[i] = keys[i-1];
                 children[i+1] = children[i];
@@ -139,7 +142,7 @@ struct BTree : public Segment {
 
     struct LeafNode: public Node {
         /// The capacity of a node.
-        static constexpr uint32_t kCapacity = (PageSize-sizeof(Node)-sizeof(uint64_t))/(sizeof(KeyT)+sizeof(ValueT));
+        static constexpr uint32_t kCapacity = (PageSize-sizeof(Node))/(sizeof(KeyT)+sizeof(ValueT));
         
         inline static constexpr uint32_t max_keys() { return kCapacity; }
         inline static constexpr uint32_t max_values() { return kCapacity; }
@@ -149,36 +152,18 @@ struct BTree : public Segment {
         /// The values.
         ValueT values[LeafNode::max_values()]; // adjust this
         /// Constructor.
-        LeafNode() : Node(0, 0) {}
+        LeafNode() : Node(0, 0) { assert(reinterpret_cast<size_t>(&keys[0])==reinterpret_cast<size_t>(this)+Node::keys_offset); }
 
         /// @brief check if node is less than half full
         /// @return 
         bool merge_needed() const { return Node::count < max_values()/2; } 
-
-        /// Get the index of the first key that is not less than than a provided key.
-        std::pair<uint32_t, bool> lower_bound(const KeyT &key) {
-            if (Node::count==0) return std::make_pair(0u, false); // no keys
-            
-            ComparatorT less;
-            uint32_t i = 0, n = Node::count;
-            // branchless binary search
-            while (n>1) {
-                auto half = n/2;
-                i += less(keys[i+half-1], key) * half; // hopefully compiler translates this to cmov
-                n -= half; // ceil(n/2)
-            }
-
-            return i==Node::count-1u && less(keys[i], key) ? // check if last key is less than key
-                std::make_pair(i+1, false) : // return index one after last key
-                std::make_pair(i, keys[i] == key);
-        }
 
         /// Insert a key.
         /// @param[in] key          The key that should be inserted.
         /// @param[in] value        The value that should be inserted.
         void insert(const KeyT &key, const ValueT &value) {
             if (Node::count == kCapacity) throw std::runtime_error("Not enough space!");
-            auto [index, found] = lower_bound(key);
+            auto [index, found] = Node::lower_bound(key);
             if (!found && index < Node::count) { // if key should be inserted in the end, no need to move
                 for (auto i=Node::count; i>index; --i) {
                     keys[i] = keys[i-1];
@@ -193,7 +178,7 @@ struct BTree : public Segment {
         /// Erase a key.
         bool erase(const KeyT &key) {
             // try to find key
-            auto [index, found] = lower_bound(key);
+            auto [index, found] = Node::lower_bound(key);
             if (!found) return false; // key not found
             erase(index, 0);
             return true;
