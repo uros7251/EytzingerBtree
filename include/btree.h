@@ -230,16 +230,10 @@ struct BTree : public Segment {
 
     /// The root.
     Swip root;
-    /// The next free page;
-    std::atomic_uint64_t used_pages_count;
-    /// Pages to be reused
-    std::forward_list<BufferFrame*> free_pages;
-    /// Mutex for free_pages
-    std::mutex free_pages_mutex;
 
     /// Constructor.
     BTree(uint16_t segment_id, BufferManager &buffer_manager)
-        : Segment(segment_id, buffer_manager), root(BufferManager::get_page_id(segment_id, 1)), used_pages_count(1) {
+        : Segment(segment_id, buffer_manager), root(allocate_page()) {
         
         auto &page = buffer_manager.fix_page(root, true);
         new (page.get_data()) LeafNode();
@@ -283,7 +277,7 @@ struct BTree : public Segment {
     void handle_root(BufferFrame* *child_page, BufferFrame* *parent_page) {
         // create a new node and copy the contents of the child node to it
         // modify initial child node such that it's now an InnerNode with only one child - newly created node
-        Swip swip = next_page_id();
+        Swip swip = allocate_page();
         auto &new_page = buffer_manager.fix_page(swip, true);
         T *new_node = new (new_page.get_data()) T(); 
         *new_node = *reinterpret_cast<T*>((*child_page)->get_data()); // default copy assignment
@@ -295,7 +289,7 @@ struct BTree : public Segment {
     }
 
     BufferFrame* handle_root(uint16_t level) {
-        Swip swip = next_page_id();
+        Swip swip = allocate_page();
         auto &page = buffer_manager.fix_page(swip, true);
         InnerNode *parent = new (page.get_data()) InnerNode(level+1); // placement new
         parent->count = 1;
@@ -310,7 +304,7 @@ struct BTree : public Segment {
         // split
         T *node = reinterpret_cast<T*>(child_page->get_data());
         InnerNode *parent_node = reinterpret_cast<InnerNode*>(parent_page->get_data());
-        Swip swip = next_page_id();
+        Swip swip = allocate_page();
         auto &page = buffer_manager.fix_page(swip, true);
         KeyT new_separator = node->split(page.get_data());
         // insert new separator into parent node
@@ -418,19 +412,7 @@ struct BTree : public Segment {
         buffer_manager.unfix_page(*child_page, true);
     }
 
-    protected:
-    Swip next_page_id() {
-        std::lock_guard lock(free_pages_mutex);
-        if (free_pages.empty()) {
-            Swip swip (buffer_manager.get_page_id(segment_id, used_pages_count++));
-            return swip;
-        }
-        else {
-            Swip swip = Swip(free_pages.front());
-            free_pages.pop_front();
-            return swip;
-        }
-    }
+    private:
 
     BufferFrame* merge(BufferFrame *parent_page, BufferFrame *child_page, uint16_t child_slot, KeyT target) {
         // hold tight, this is 200+ lines function :)
@@ -519,11 +501,8 @@ struct BTree : public Segment {
                 buffer_manager.unfix_page(*child_page, false);
                 buffer_manager.unfix_page(*neighboor_page, false);
                 // enable later reuse of these frames
-                {
-                    std::lock_guard lock(free_pages_mutex);
-                    free_pages.push_front(child_page);
-                    free_pages.push_front(neighboor_page);
-                }
+                deallocate_page(child_page);
+                deallocate_page(neighboor_page);
                 return parent_page;
             }
             else {
@@ -552,14 +531,12 @@ struct BTree : public Segment {
                 buffer_manager.unfix_page(*parent_page, true);
                 if (left_slot==child_slot) {
                     buffer_manager.unfix_page(*neighboor_page, false);
-                    std::lock_guard lock(free_pages_mutex);
-                    free_pages.push_front(neighboor_page);
+                    deallocate_page(neighboor_page);
                     return child_page;
                 }
                 else {
                     buffer_manager.unfix_page(*child_page, false);
-                    std::lock_guard lock(free_pages_mutex);
-                    free_pages.push_front(child_page);
+                    deallocate_page(child_page);
                     return neighboor_page;
                 }
             }
