@@ -7,6 +7,7 @@
 #include "buffer_manager.h"
 #include "segment.h"
 #include "swip.h"
+#include "unique_page.h"
 
 namespace guidedresearch {
 
@@ -235,9 +236,9 @@ struct BTree : public Segment {
     BTree(uint16_t segment_id, BufferManager &buffer_manager)
         : Segment(segment_id, buffer_manager), root(allocate_page()) {
         
-        auto &page = buffer_manager.fix_page(root, true);
-        new (page.get_data()) LeafNode();
-        buffer_manager.unfix_page(page, true);
+        UniquePage page(buffer_manager, root);
+        new (page->get_data()) LeafNode();
+        page.mark_dirty();
     }
 
     /// Destructor.
@@ -274,49 +275,42 @@ struct BTree : public Segment {
 
     template<typename T>
     requires std::is_base_of_v<Node, T>
-    void handle_root(BufferFrame* *child_page, BufferFrame* *parent_page) {
+    void handle_root(UniquePage& child_page, UniquePage& parent_page) {
         // create a new node and copy the contents of the child node to it
         // modify initial child node such that it's now an InnerNode with only one child - newly created node
         Swip swip = allocate_page();
-        auto &new_page = buffer_manager.fix_page(swip, true);
-        T *new_node = new (new_page.get_data()) T(); 
-        *new_node = *reinterpret_cast<T*>((*child_page)->get_data()); // default copy assignment
-        InnerNode *old_node = new ((*child_page)->get_data()) InnerNode(new_node->level+1);
+        UniquePage new_page(buffer_manager, swip);
+        T *new_node = new (new_page->get_data()) T(); 
+        *new_node = *reinterpret_cast<T*>(child_page->get_data()); // default copy assignment
+        InnerNode *old_node = new (child_page->get_data()) InnerNode(new_node->level+1);
         old_node->children[0]=swip;
         old_node->count=1;
-        *parent_page = *child_page;
-        *child_page = &new_page;
+        parent_page = std::move(child_page);
+        child_page = std::move(new_page);
     }
 
-    BufferFrame* handle_root(uint16_t level) {
-        Swip swip = allocate_page();
-        auto &page = buffer_manager.fix_page(swip, true);
-        InnerNode *parent = new (page.get_data()) InnerNode(level+1); // placement new
-        parent->count = 1;
-        parent->children[0] = root;
-        root = swip;
-        return &page;
-    }
-
+    /// @brief Splits the child page node and updates the child page through reference if neccessary
+    /// @tparam T 
+    /// @param child_page lvalue reference to the child page
+    /// @param parent_page lvalue reference to the parent page
+    /// @param target key to be inserted which determines if the child page will be updated 
     template<typename T>
     requires std::is_base_of_v<Node, T>
-    BufferFrame* split_node(BufferFrame *child_page, BufferFrame *parent_page, KeyT target) {
+    void split_node(UniquePage& child_page, UniquePage& parent_page, KeyT target) {
         // split
         T *node = reinterpret_cast<T*>(child_page->get_data());
         InnerNode *parent_node = reinterpret_cast<InnerNode*>(parent_page->get_data());
         Swip swip = allocate_page();
-        auto &page = buffer_manager.fix_page(swip, true);
-        KeyT new_separator = node->split(page.get_data());
+        UniquePage page(buffer_manager, swip);
+        KeyT new_separator = node->split(page->get_data());
+        // mark pages as dirty
+        child_page.mark_dirty();
+        page.mark_dirty();
         // insert new separator into parent node
         parent_node->insert_split(new_separator, swip);
-        buffer_manager.unfix_page(*parent_page, true);
+        parent_page.mark_dirty();
         if (target > new_separator) {
-            buffer_manager.unfix_page(*child_page, true);
-            return &page;
-        }
-        else {
-            buffer_manager.unfix_page(page, true);
-            return child_page;
+            child_page = std::move(page);
         }
     }
 
@@ -324,101 +318,86 @@ struct BTree : public Segment {
     /// @param[in] key      The key that should be inserted.
     /// @param[in] value    The value that should be inserted.
     void insert(const KeyT &key, const ValueT &value) {
-        BufferFrame *child_page = &buffer_manager.fix_page(root, true),
-            *parent_page = nullptr;
+        UniquePage child_page(buffer_manager, root), parent_page(buffer_manager);
+        //BufferFrame *child_page = &buffer_manager.fix_page(root, true),
+        //    *parent_page = nullptr;
         Node *child = reinterpret_cast<Node*>(child_page->get_data());
         if (child->is_leaf()) {
             LeafNode *child_as_leaf = reinterpret_cast<LeafNode*>(child);
             if (child_as_leaf->count == LeafNode::max_values()) {
-                handle_root<LeafNode>(&child_page, &parent_page);
+                handle_root<LeafNode>(child_page, parent_page);
                 child = reinterpret_cast<Node*>(child_page->get_data());
             }
         }
         else {
             InnerNode *child_as_inner = reinterpret_cast<InnerNode*>(child);
             if (child_as_inner->count == InnerNode::max_children()) {
-                handle_root<InnerNode>(&child_page, &parent_page);
+                handle_root<InnerNode>(child_page, parent_page);
                 child = reinterpret_cast<Node*>(child_page->get_data());
             }
         }
         while (!child->is_leaf()) {
             if (child->count == InnerNode::max_children()) {
-                child_page = split_node<InnerNode>(child_page, parent_page, key);
-            }
-            else if (parent_page) {
-                buffer_manager.unfix_page(*parent_page, false); // no writes to parent
+                split_node<InnerNode>(child_page, parent_page, key);
             }
             InnerNode *child_as_inner = reinterpret_cast<InnerNode*>(child_page->get_data());
             auto [index, match] = child_as_inner->lower_bound(key);
             Swip &swip = child_as_inner->children[index]; // it's crucial that swip is a reference
-            parent_page = child_page;
-            child_page = &buffer_manager.fix_page(swip, true);
+            parent_page = std::move(child_page);
+            child_page.fix(swip);
             child = reinterpret_cast<Node*>(child_page->get_data());
         }
         // at the bottom
         if (child->count == LeafNode::max_values()) {
-            child_page = split_node<LeafNode>(child_page, parent_page, key);
+            split_node<LeafNode>(child_page, parent_page, key);
         }
-        else if (parent_page) buffer_manager.unfix_page(*parent_page, false);
         
         LeafNode *child_as_leaf = reinterpret_cast<LeafNode*>(child_page->get_data());
         child_as_leaf->insert(key, value);
-        buffer_manager.unfix_page(*child_page, true);
+        child_page.mark_dirty();
     }
 
     /// Erase a key.
     void erase(const KeyT &key) {
-        BufferFrame *child_page = &buffer_manager.fix_page(root, true),
-            *parent_page = nullptr;
+        UniquePage child_page(buffer_manager, root), parent_page(buffer_manager);
+        //BufferFrame *child_page = &buffer_manager.fix_page(root, true),
+        //    *parent_page = nullptr;
         Node *child = reinterpret_cast<Node*>(child_page->get_data());
         InnerNode *parent = nullptr;
-        bool dirty = false;
         while (!child->is_leaf()) {
-            parent_page = child_page;
+            parent_page = std::move(child_page);
             parent = static_cast<InnerNode*>(child);
             auto [index, match] = parent->lower_bound(key);
             Swip &swip = parent->children[index]; // it's crucial that swip is a reference because fix_page might change it
-            child_page = &buffer_manager.fix_page(swip, true);
+            child_page.fix(swip);
             child = reinterpret_cast<Node*>(child_page->get_data());
             if (child->is_leaf()) {
                 LeafNode *child_as_leaf = static_cast<LeafNode*>(child);
                 if (child_as_leaf->merge_needed()) {
                     // this call will unfix the pages that need to be unfixed
-                    // note: if we merge into the parent, we should not unfix the parent page
-                    child_page = merge(parent_page, child_page, index, key);
-                    // we changed the child_page, which is a future parent
-                    dirty = true;
-                }
-                else {
-                    buffer_manager.unfix_page(*parent_page, dirty);
-                    dirty = false;
+                    merge(parent_page, child_page, index, key);
                 }
             }
             else {
                 InnerNode *child_as_inner = static_cast<InnerNode*>(child);
                 if (child_as_inner->merge_needed()) {
-                    child_page = merge(parent_page, child_page, index, key);
-                    dirty = true;
-                }
-                else {
-                    buffer_manager.unfix_page(*parent_page, dirty);
-                    dirty = false;
+                    merge(parent_page, child_page, index, key);
                 }
             }
             child = reinterpret_cast<Node*>(child_page->get_data());
         }
         LeafNode *leaf = static_cast<LeafNode*>(child);
         leaf->erase(key);
-        buffer_manager.unfix_page(*child_page, true);
     }
 
     private:
 
-    BufferFrame* merge(BufferFrame *parent_page, BufferFrame *child_page, uint16_t child_slot, KeyT target) {
+    void merge(UniquePage& parent_page, UniquePage& child_page, uint16_t child_slot, KeyT target) {
         // hold tight, this is 200+ lines function :)
 
         // assumes child and parent pages are already fixed
-        BufferFrame *neighboor_page;
+        UniquePage&& neighboor_page(buffer_manager);
+        // BufferFrame *neighboor_page;
         Node *left_node, *right_node;
         InnerNode *parent = reinterpret_cast<InnerNode*>(parent_page->get_data());
         uint16_t left_slot;
@@ -426,7 +405,7 @@ struct BTree : public Segment {
         if (child_slot == 0) {
             // only right sibling exists
             Swip &swip = parent->children[1];
-            neighboor_page = &buffer_manager.fix_page(swip, true);
+            neighboor_page.fix(swip);
             left_slot = child_slot;
             left_node = reinterpret_cast<Node*>(child_page->get_data());
             right_node = reinterpret_cast<Node*>(neighboor_page->get_data());
@@ -434,7 +413,7 @@ struct BTree : public Segment {
         else if (child_slot == parent->count-1) {
             // only left sibling exists
             Swip &swip = parent->children[parent->count-2];
-            neighboor_page = &buffer_manager.fix_page(swip, true);
+            neighboor_page.fix(swip);
             left_slot = child_slot-1;
             left_node = reinterpret_cast<Node*>(neighboor_page->get_data());
             right_node = reinterpret_cast<Node*>(child_page->get_data());
@@ -442,21 +421,19 @@ struct BTree : public Segment {
         else {
             Swip &left_swip = parent->children[child_slot-1],
                 &right_swip = parent->children[child_slot+1];
-            BufferFrame *left_neighboor_page = &buffer_manager.fix_page(left_swip, true),
-                        *right_neighboor_page = &buffer_manager.fix_page(right_swip, true);
+            UniquePage left_neighboor_page(buffer_manager, left_swip),
+                    right_neighboor_page(buffer_manager, right_swip);
             left_node = reinterpret_cast<Node*>(left_neighboor_page->get_data());
             right_node = reinterpret_cast<Node*>(right_neighboor_page->get_data());
             if (left_node->count > right_node->count) {
                 left_node = reinterpret_cast<Node*>(child_page->get_data());
                 left_slot = child_slot;
-                neighboor_page = right_neighboor_page;
-                buffer_manager.unfix_page(*left_neighboor_page, false);
+                neighboor_page = std::move(right_neighboor_page);
             }
             else {
                 right_node = reinterpret_cast<Node*>(child_page->get_data());
                 left_slot = child_slot-1;
-                neighboor_page = left_neighboor_page;
-                buffer_manager.unfix_page(*right_neighboor_page, false);
+                neighboor_page = std::move(left_neighboor_page);
             }
         }
         uint16_t total_count = left_node->count + right_node->count;
@@ -498,12 +475,10 @@ struct BTree : public Segment {
                     }
                     parent->children[parent->count-1] = right_node_as_inner->children[right_node->count-1]; // move last child from the right node
                 }
-                buffer_manager.unfix_page(*child_page, false);
-                buffer_manager.unfix_page(*neighboor_page, false);
                 // enable later reuse of these frames
-                deallocate_page(child_page);
-                deallocate_page(neighboor_page);
-                return parent_page;
+                deallocate_page(child_page.bf_ptr());
+                deallocate_page(neighboor_page.bf_ptr());
+                child_page = std::move(parent_page);
             }
             else {
                 // regular merge
@@ -528,18 +503,16 @@ struct BTree : public Segment {
                 left_node->count += right_node->count;
                 parent->keys[left_slot] = parent->keys[left_slot+1];
                 parent->erase(left_slot+1);
-                buffer_manager.unfix_page(*parent_page, true);
+                parent_page.mark_dirty();
                 if (left_slot==child_slot) {
-                    buffer_manager.unfix_page(*neighboor_page, false);
-                    deallocate_page(neighboor_page);
-                    return child_page;
+                    deallocate_page(neighboor_page.bf_ptr());
                 }
                 else {
-                    buffer_manager.unfix_page(*child_page, false);
-                    deallocate_page(child_page);
-                    return neighboor_page;
+                    deallocate_page(child_page.bf_ptr());
+                    child_page = std::move(neighboor_page);
                 }
             }
+            return;
         }
         // merge not possible, rebalance
         KeyT new_separator;
@@ -620,26 +593,11 @@ struct BTree : public Segment {
             right_node->count-=to_shift;
         }
         parent->keys[left_slot] = new_separator;
-        buffer_manager.unfix_page(*parent_page, true);
-        if (target <= new_separator) {
-            if (left_slot == child_slot) {
-                buffer_manager.unfix_page(*neighboor_page, true);
-                return child_page;
-            }
-            else {
-                buffer_manager.unfix_page(*child_page, true);
-                return neighboor_page;
-            }
-        }
-        else {
-            if (left_slot == child_slot) {
-                buffer_manager.unfix_page(*child_page, true);
-                return neighboor_page;
-            }
-            else {
-                buffer_manager.unfix_page(*neighboor_page, true);
-                return child_page;
-            }
+        neighboor_page.mark_dirty();
+        child_page.mark_dirty();
+        parent_page.mark_dirty();
+        if ((target <= new_separator && left_slot != child_slot) || (target > new_separator && left_slot == child_slot)) {
+            child_page = std::move(neighboor_page);
         }
     }
     

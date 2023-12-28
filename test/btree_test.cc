@@ -422,7 +422,7 @@ TEST(BTreeTest, EraseIncreasing) {
         tree.insert(i, 2 * i);
     }
     // Reuse pages
-    ASSERT_EQ(tree.used_pages_count.load(), pages_used); 
+    ASSERT_EQ(tree.used_pages_count.load(), pages_used) << "pages are not being reused"; 
 }
 
 // NOLINTNEXTLINE
