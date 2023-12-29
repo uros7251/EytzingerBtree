@@ -8,6 +8,7 @@
 #include "segment.h"
 #include "swip.h"
 #include "unique_page.h"
+#include "shared_page.h"
 
 namespace guidedresearch {
 
@@ -251,7 +252,7 @@ struct BTree : public Segment {
         // q: why we need lock coupling?
         // a: because it might happen that some other thread is running insert operation and it 
         // splits a node. So, for example, the key we are looking for ends up on a different node
-        BufferFrame *page = &buffer_manager.fix_page(root, false), *parent_page = nullptr;
+        SharedPage page(buffer_manager, root), parent_page(buffer_manager);
         auto *node = reinterpret_cast<Node*>(page->get_data());
         while (!node->is_leaf()) {
             // traverse inner nodes
@@ -260,8 +261,7 @@ struct BTree : public Segment {
             Swip swip = inner_node->children[index];
             parent_page = page;
             // lock coupling
-            page = &buffer_manager.fix_page(swip, false);
-            buffer_manager.unfix_page(*parent_page, false); 
+            page.fix(swip);
             node = reinterpret_cast<Node*>(page->get_data());
         }
         // leaf level
@@ -269,7 +269,6 @@ struct BTree : public Segment {
         auto [index, match] = leaf_node->lower_bound(key);
         std::optional<ValueT> result;
         if (match) result = {leaf_node->values[index]};
-        buffer_manager.unfix_page(*page, false);
         return result;
     }
 
@@ -319,8 +318,6 @@ struct BTree : public Segment {
     /// @param[in] value    The value that should be inserted.
     void insert(const KeyT &key, const ValueT &value) {
         UniquePage child_page(buffer_manager, root), parent_page(buffer_manager);
-        //BufferFrame *child_page = &buffer_manager.fix_page(root, true),
-        //    *parent_page = nullptr;
         Node *child = reinterpret_cast<Node*>(child_page->get_data());
         if (child->is_leaf()) {
             LeafNode *child_as_leaf = reinterpret_cast<LeafNode*>(child);
@@ -360,15 +357,13 @@ struct BTree : public Segment {
     /// Erase a key.
     void erase(const KeyT &key) {
         UniquePage child_page(buffer_manager, root), parent_page(buffer_manager);
-        //BufferFrame *child_page = &buffer_manager.fix_page(root, true),
-        //    *parent_page = nullptr;
         Node *child = reinterpret_cast<Node*>(child_page->get_data());
         InnerNode *parent = nullptr;
         while (!child->is_leaf()) {
             parent_page = std::move(child_page);
             parent = static_cast<InnerNode*>(child);
             auto [index, match] = parent->lower_bound(key);
-            Swip &swip = parent->children[index]; // it's crucial that swip is a reference because fix_page might change it
+            Swip &swip = parent->children[index]; // it's crucial that swip is a reference because fix() might change it
             child_page.fix(swip);
             child = reinterpret_cast<Node*>(child_page->get_data());
             if (child->is_leaf()) {
