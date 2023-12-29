@@ -4,3 +4,17 @@ use simd
 
 for later:
 try to add next_node pointers to leaf nodes while taking into account buffer manager based on pointer swizzling
+
+altan's notes:
+
+implemented:
+ - hot path inlined
+ - move allocate/deallocate logic to segment class (?)
+ - use assertions instead of exceptions
+ - avoid code repetition in lower_bound (?)
+ - no problem in merge
+ - use of RAII for fix/unfix page
+
+left to be implemented:
+ - optimistic lock coupling
+ - fast insertions
