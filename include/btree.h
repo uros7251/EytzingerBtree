@@ -3,9 +3,8 @@
 
 #include <type_traits>
 #include <forward_list>
-
-#include "buffer_manager.h"
 #include "segment.h"
+#include "buffer_manager.h"
 #include "swip.h"
 #include "unique_page.h"
 #include "shared_page.h"
@@ -74,6 +73,15 @@ struct BTree : public Segment {
         /// Constructor.
         InnerNode() : Node(0, 0) { assert(reinterpret_cast<size_t>(&keys[0])==reinterpret_cast<size_t>(this)+Node::keys_offset); }
         InnerNode(uint16_t level) : Node(level, 0) {}
+        InnerNode(const InnerNode &other) : Node(other) {
+            copy();
+        }
+        
+        /// Assignment operator
+        InnerNode& operator=(const InnerNode &other) {
+            copy(other);
+            return *this;
+        }
 
         /// this method can be virtual, but we avoid that on purpose
         /// @brief check if node is less than half full
@@ -85,8 +93,8 @@ struct BTree : public Segment {
         /// @param[in] child        The child that should be inserted.
         void insert_split(const KeyT &key, Swip child) {
             // for example, insert_split(3, 40)
-            // BEFORE: keys = [1, 4, 9], children = [8, 3, 13, 7]
-            // AFTER: keys = [1, 3, 4, 9], children = [8, 3, 40, 13, 7]
+            // BEFORE: keys = [1, 4, 9, ?], children = [8, 3, 13, 7, ?], count = 4
+            // AFTER: keys = [1, 3, 4, 9], children = [8, 3, 40, 13, 7], count = 5
 
             assert(Node::count-1 != InnerNode::kCapacity);
             auto [index, _] = Node::lower_bound(key); // find index to insert key
@@ -99,9 +107,14 @@ struct BTree : public Segment {
             Node::count++;
         }
 
-        /// @brief Erases a key and an assosiacted child
-        /// @param index Index of the key and the child to be erased
+        /// @brief Erases a key and a child associated with the next key
+        /// @param index Index of the key to be erased
         void erase(uint16_t index) {
+            // for example, erase(1)
+            // BEFORE: keys = [1, 3, 4, 9], children = [8, 3, 40, 13, 7], count = 5
+            // AFTER: keys = [1, 4, 9, 9], children = [8, 3, 13, 7, 7], count = 4
+            keys[index] = keys[index+1];
+            ++index;
             assert(Node::count > 0);
             if (index < Node::count-1u) {
                 for (uint32_t i=index; i+2u<Node::count; ++i) {
@@ -136,9 +149,71 @@ struct BTree : public Segment {
             return keys[Node::count-1]; // Node::count-1 = new number of keys in old_node
         }
 
+        void merge(InnerNode &other, const KeyT &old_separator) {
+            assert(Node::count > 0);
+            keys[Node::count-1] = old_separator;
+            for (uint16_t i=0; i<other.count-1u; ++i) {
+                keys[i+Node::count] = other.keys[i];
+                children[i+Node::count] = other.children[i];
+            }
+            children[Node::count+other.count-1u] = other.children[other.count-1u];
+            Node::count += other.count;
+        }
+
         /// Returns the keys.
         std::vector<KeyT> get_key_vector() {
             return std::vector<KeyT>(&keys[0], &keys[0]+Node::count);
+        }
+
+        static void rebalance(InnerNode &left, InnerNode &right, KeyT &separator) {
+            // make space for keys and values from the left
+            if (left.count > right.count) {
+                uint16_t to_shift = (left.count-right.count)/2; // shift half the difference
+                // make space for keys and values from the left node
+                for (uint16_t i=right.count; i>0;) {
+                    --i;
+                    right.keys[i+to_shift] = right.keys[i];
+                    right.children[i+to_shift] = right.children[i];
+                }
+                right.keys[to_shift-1] = separator; // move old separator from parent
+                right.children[to_shift-1] = left.children[left.count-1]; // move rightmost child of left node
+                for (uint16_t i=0, pos=left.count-to_shift; i<to_shift-1; ++i) {
+                    right.keys[i] = left.keys[pos+i];
+                    right.children[i] = left.children[pos+i];
+                }
+                separator = left.keys[left.count-to_shift-1];
+                left.count -= to_shift;
+                right.count += to_shift;
+            }
+            else {
+                uint16_t to_shift = (right.count-left.count)/2; // shift half the difference
+                // move separator from parent
+                left.keys[left.count-1] = separator;
+                // move to_shift-1 keys and children from right to left
+                for (uint16_t i=0; i<to_shift-1; ++i) {
+                    left.keys[i+left.count] = right.keys[i];
+                    left.children[i+left.count] = right.children[i];
+                }
+                // move the last child from right to left
+                left.children[left.count+to_shift-1] = right.children[to_shift-1];
+                separator = right.keys[to_shift-1];
+                for (uint16_t i=0; i<right.count-to_shift; ++i) {
+                    right.keys[i] = right.keys[i+to_shift];
+                    right.children[i] = right.children[i+to_shift];
+                }
+                left.count += to_shift;
+                right.count -= to_shift;
+            }
+        }
+
+    private:
+        void copy(const InnerNode &other) {
+            Node::operator=(other);
+            for (uint32_t i=0; i<Node::count-1u; ++i) {
+                keys[i] = other.keys[i];
+                children[i] = other.children[i];
+            }
+            children[Node::count-1u] = other.children[Node::count-1u];
         }
     };
 
@@ -155,6 +230,15 @@ struct BTree : public Segment {
         ValueT values[LeafNode::max_values()]; // adjust this
         /// Constructor.
         LeafNode() : Node(0, 0) { assert(reinterpret_cast<size_t>(&keys[0])==reinterpret_cast<size_t>(this)+Node::keys_offset); }
+        LeafNode(const LeafNode &other) : Node(other) {
+            copy();
+        }
+        
+        /// Assignment operator
+        LeafNode& operator=(const LeafNode &other) {
+            copy(other);
+            return *this;
+        }
 
         /// @brief check if node is less than half full
         /// @return 
@@ -182,7 +266,13 @@ struct BTree : public Segment {
             // try to find key
             auto [index, found] = Node::lower_bound(key);
             if (!found) return false; // key not found
-            erase(index, 0);
+            if (index < Node::count-1u) { // if key is last key, no need to move
+                for (auto i=index; i<Node::count-1u; ++i) {
+                    keys[i] = keys[i+1];
+                    values[i] = values[i+1]; 
+                }
+            }
+            --Node::count;
             return true;
         }
 
@@ -206,6 +296,14 @@ struct BTree : public Segment {
             return keys[Node::count-1]; // return (new) rightmost key of old_node
         }
 
+        void merge(LeafNode &other) {
+            for (uint16_t i=0; i<other.count; ++i) {
+                keys[i+Node::count] = other.keys[i];
+                values[i+Node::count] = other.values[i];
+            }
+            Node::count += other.count;
+        }
+
         /// Returns the keys.
         std::vector<KeyT> get_key_vector() {
             return std::vector<KeyT>(keys, keys+Node::count);
@@ -216,19 +314,50 @@ struct BTree : public Segment {
             return std::vector<ValueT>(values, values+Node::count);
         }
 
-        private:
-        inline void erase(uint16_t index, int) {
-            if (index < Node::count-1u) { // if key is last key, no need to move
-                for (auto i=index; i<Node::count-1; ++i) {
-                    keys[i] = keys[i+1];
-                    values[i] = values[i+1]; 
+        static void rebalance(LeafNode &left, LeafNode &right, KeyT &separator) {
+            if (left.count > right.count) {
+                uint16_t to_shift = (left.count-right.count)/2; // shift half the difference
+                // make space for keys and values from the left node
+                for (uint16_t i=right.count; i>0;) {
+                    --i;
+                    right.keys[i+to_shift] = right.keys[i];
+                    right.values[i+to_shift] = right.values[i];
                 }
+                for (uint16_t i=0, pos=left.count-to_shift; i<to_shift; ++i) {
+                    right.keys[i] = left.keys[pos+i];
+                    right.values[i] = left.values[pos+i];
+                }
+                separator = left.keys[left.count-to_shift-1];
+                left.count -= to_shift;
+                right.count += to_shift;
             }
-            --Node::count;
+            else {
+                uint16_t to_shift = (right.count-left.count)/2; // shift half the difference
+                
+                for (uint16_t i=0; i<to_shift; ++i) {
+                    left.keys[i+left.count] = right.keys[i];
+                    left.values[i+left.count] = right.values[i];
+                }
+                for (uint16_t i=0; i<right.count-to_shift; ++i) {
+                    right.keys[i] = right.keys[i+to_shift];
+                    right.values[i] = right.values[i+to_shift];
+                }
+                separator = left.keys[left.count+to_shift-1];
+                left.count += to_shift;
+                right.count -= to_shift;
+            }
+        }
+
+
+    private:
+        void copy(const LeafNode &other) {
+            Node::operator=(other);
+            for (uint32_t i=0; i<Node::count; ++i) {
+                keys[i] = other.keys[i];
+                values[i] = other.values[i];
+            }
         }
     };
-
-    
 
     /// The root.
     Swip root;
@@ -280,7 +409,7 @@ struct BTree : public Segment {
         Swip swip = allocate_page();
         UniquePage new_page(buffer_manager, swip);
         T *new_node = new (new_page->get_data()) T(); 
-        *new_node = *reinterpret_cast<T*>(child_page->get_data()); // default copy assignment
+        *new_node = *reinterpret_cast<T*>(child_page->get_data()); // copy
         InnerNode *old_node = new (child_page->get_data()) InnerNode(new_node->level+1);
         old_node->children[0]=swip;
         old_node->count=1;
@@ -388,34 +517,34 @@ struct BTree : public Segment {
     private:
 
     void merge(UniquePage& parent_page, UniquePage& child_page, uint16_t child_slot, KeyT target) {
-        // hold tight, this is 200+ lines function :)
+        // hold tight, this is ~200 lines function :)
 
         // assumes child and parent pages are already fixed
-        UniquePage&& neighboor_page(buffer_manager);
+        UniquePage neighboor_page(buffer_manager);
         // BufferFrame *neighboor_page;
         Node *left_node, *right_node;
-        InnerNode *parent = reinterpret_cast<InnerNode*>(parent_page->get_data());
+        InnerNode &parent = *reinterpret_cast<InnerNode*>(parent_page->get_data());
         uint16_t left_slot;
         // determine which sibling to merge with
         if (child_slot == 0) {
             // only right sibling exists
-            Swip &swip = parent->children[1];
+            Swip &swip = parent.children[1];
             neighboor_page.fix(swip);
             left_slot = child_slot;
             left_node = reinterpret_cast<Node*>(child_page->get_data());
             right_node = reinterpret_cast<Node*>(neighboor_page->get_data());
         }
-        else if (child_slot == parent->count-1) {
+        else if (child_slot == parent.count-1) {
             // only left sibling exists
-            Swip &swip = parent->children[parent->count-2];
+            Swip &swip = parent.children[parent.count-2];
             neighboor_page.fix(swip);
             left_slot = child_slot-1;
             left_node = reinterpret_cast<Node*>(neighboor_page->get_data());
             right_node = reinterpret_cast<Node*>(child_page->get_data());
         }
         else {
-            Swip &left_swip = parent->children[child_slot-1],
-                &right_swip = parent->children[child_slot+1];
+            Swip &left_swip = parent.children[child_slot-1],
+                &right_swip = parent.children[child_slot+1];
             UniquePage left_neighboor_page(buffer_manager, left_swip),
                     right_neighboor_page(buffer_manager, right_swip);
             left_node = reinterpret_cast<Node*>(left_neighboor_page->get_data());
@@ -436,39 +565,21 @@ struct BTree : public Segment {
         if (total_count <= max_count) {
             // if parent has only these two children, we can merge them into parent.
             // This is possible only if the parent is the root node.
-            if (parent->count == 2) {
+            if (parent.count == 2) {
                 if (left_node->is_leaf()) {
-                    LeafNode *left_node_as_leaf = static_cast<LeafNode*>(left_node),
-                                *right_node_as_leaf = static_cast<LeafNode*>(right_node);
+                    LeafNode &left_node_as_leaf = *static_cast<LeafNode*>(left_node),
+                                &right_node_as_leaf = *static_cast<LeafNode*>(right_node);
                     // turn parent into leaf node
-                    parent->level = 0;
-                    LeafNode *parent_as_leaf = reinterpret_cast<LeafNode*>(parent);
-                    parent_as_leaf->count = left_node->count + right_node->count;
-                    for (uint16_t i=0; i<left_node->count; ++i) {
-                        parent_as_leaf->keys[i] = left_node_as_leaf->keys[i];
-                        parent_as_leaf->values[i] = left_node_as_leaf->values[i];
-                    }
-                    for (uint16_t i=0; i<right_node->count; ++i) {
-                        parent_as_leaf->keys[i+left_node->count] = right_node_as_leaf->keys[i];
-                        parent_as_leaf->values[i+left_node->count] = right_node_as_leaf->values[i];
-                    }
+                    LeafNode *parent_as_leaf = new (&parent) LeafNode();
+                    parent_as_leaf->merge(left_node_as_leaf);
+                    parent_as_leaf->merge(right_node_as_leaf);
                 }
                 else {
-                    InnerNode *left_node_as_inner = static_cast<InnerNode*>(left_node),
-                                *right_node_as_inner = static_cast<InnerNode*>(right_node);
-                    --parent->level; // decrement parent's level
-                    parent->count = left_node->count + right_node->count;
-                    parent->keys[left_node->count-1] = parent->keys[0]; // move the old separator to the middle
-                    for (uint16_t i=0; i<left_node->count-1; ++i) {
-                        parent->keys[i] = left_node_as_inner->keys[i];
-                        parent->children[i] = left_node_as_inner->children[i];
-                    }
-                    parent->children[left_node->count-1] = left_node_as_inner->children[left_node->count-1]; // move last child from the left node (pairs with old seperator)
-                    for (uint16_t i=0; i<right_node->count-1; ++i) {
-                        parent->keys[i+left_node->count] = right_node_as_inner->keys[i];
-                        parent->children[i+left_node->count] = right_node_as_inner->children[i];
-                    }
-                    parent->children[parent->count-1] = right_node_as_inner->children[right_node->count-1]; // move last child from the right node
+                    InnerNode &left_node_as_inner = *static_cast<InnerNode*>(left_node),
+                                &right_node_as_inner = *static_cast<InnerNode*>(right_node);
+                    KeyT old_separator = parent.keys[0];
+                    parent = left_node_as_inner; // copy
+                    parent.merge(right_node_as_inner, old_separator);
                 }
                 // enable later reuse of these frames
                 deallocate_page(child_page.bf_ptr());
@@ -478,26 +589,16 @@ struct BTree : public Segment {
             else {
                 // regular merge
                 if (left_node->is_leaf()) {
-                    LeafNode *left_node_as_leaf = static_cast<LeafNode*>(left_node),
-                                *right_node_as_leaf = static_cast<LeafNode*>(right_node);
-                    for (uint16_t i=0; i<right_node->count; ++i) {
-                        left_node_as_leaf->keys[i+left_node->count] = right_node_as_leaf->keys[i];
-                        left_node_as_leaf->values[i+left_node->count] = right_node_as_leaf->values[i];
-                    }
+                    LeafNode &left_node_as_leaf = *static_cast<LeafNode*>(left_node),
+                                &right_node_as_leaf = *static_cast<LeafNode*>(right_node);
+                    left_node_as_leaf.merge(right_node_as_leaf);
                 }
                 else {
                     InnerNode *left_node_as_inner = static_cast<InnerNode*>(left_node),
                                 *right_node_as_inner = static_cast<InnerNode*>(right_node);
-                    left_node_as_inner->keys[left_node->count-1] = parent->keys[left_slot];
-                    for (uint16_t i=0; i<right_node->count-1; ++i) {
-                        left_node_as_inner->keys[i+left_node->count] = right_node_as_inner->keys[i];
-                        left_node_as_inner->children[i+left_node->count] = right_node_as_inner->children[i];
-                    }
-                    left_node_as_inner->children[left_node->count+right_node->count-1] = right_node_as_inner->children[right_node->count-1];
+                    left_node_as_inner->merge(*right_node_as_inner, parent.keys[left_slot]);
                 }
-                left_node->count += right_node->count;
-                parent->keys[left_slot] = parent->keys[left_slot+1];
-                parent->erase(left_slot+1);
+                parent.erase(left_slot);
                 parent_page.mark_dirty();
                 if (left_slot==child_slot) {
                     deallocate_page(neighboor_page.bf_ptr());
@@ -510,88 +611,21 @@ struct BTree : public Segment {
             return;
         }
         // merge not possible, rebalance
-        KeyT new_separator;
-        if (left_node->count > right_node->count) {
-            // shift from left to right
-            uint16_t to_shift = (left_node->count-right_node->count)/2; // shift half the difference
-            if (left_node->is_leaf()) {
-                LeafNode *left_node_as_leaf = static_cast<LeafNode*>(left_node),
-                            *right_node_as_leaf = static_cast<LeafNode*>(right_node);
-                // make space for keys and values from the left
-                for (uint16_t i=right_node->count; i>0;) {
-                    --i;
-                    right_node_as_leaf->keys[i+to_shift] = right_node_as_leaf->keys[i];
-                    right_node_as_leaf->values[i+to_shift] = right_node_as_leaf->values[i];
-                }
-                for (uint16_t i=0, pos=left_node->count-to_shift; i<to_shift; ++i) {
-                    right_node_as_leaf->keys[i] = left_node_as_leaf->keys[pos+i];
-                    right_node_as_leaf->values[i] = left_node_as_leaf->values[pos+i];
-                }
-                new_separator = left_node_as_leaf->keys[left_node->count-to_shift-1];
-            }
-            else {
-                InnerNode *left_node_as_inner = static_cast<InnerNode*>(left_node),
-                            *right_node_as_inner = static_cast<InnerNode*>(right_node);
-                // make space for keys and values from the left
-                for (uint16_t i=right_node->count; i>0;) {
-                    --i;
-                    right_node_as_inner->keys[i+to_shift] = right_node_as_inner->keys[i];
-                    right_node_as_inner->children[i+to_shift] = right_node_as_inner->children[i];
-                }
-                right_node_as_inner->keys[to_shift-1] = parent->keys[left_slot]; // move old separator from parent
-                right_node_as_inner->children[to_shift-1] = left_node_as_inner->children[left_node->count-1]; // move rightmost child of left node
-                for (uint16_t i=0, pos=left_node->count-to_shift; i<to_shift-1; ++i) {
-                    right_node_as_inner->keys[i] = left_node_as_inner->keys[pos+i];
-                    right_node_as_inner->children[i] = left_node_as_inner->children[pos+i];
-                }
-                new_separator = left_node_as_inner->keys[left_node->count-to_shift-1];
-            }
-            left_node->count-=to_shift;
-            right_node->count+=to_shift;
+        KeyT &separator = parent.keys[left_slot];
+        if (left_node->is_leaf()) {
+            LeafNode &left_node_as_leaf = *static_cast<LeafNode*>(left_node),
+                     &right_node_as_leaf = *static_cast<LeafNode*>(right_node);
+            LeafNode::rebalance(left_node_as_leaf, right_node_as_leaf, separator);
         }
         else {
-            // shift from right to left
-            uint16_t to_shift = (right_node->count-left_node->count)/2; // shift half the difference
-            if (left_node->is_leaf()) {
-                LeafNode *left_node_as_leaf = static_cast<LeafNode*>(left_node),
-                            *right_node_as_leaf = static_cast<LeafNode*>(right_node);
-                for (uint16_t i=0; i<to_shift; ++i) {
-                    left_node_as_leaf->keys[i+left_node->count] = right_node_as_leaf->keys[i];
-                    left_node_as_leaf->values[i+left_node->count] = right_node_as_leaf->values[i];
-                }
-                for (uint16_t i=0; i<right_node->count-to_shift; ++i) {
-                    right_node_as_leaf->keys[i] = right_node_as_leaf->keys[i+to_shift];
-                    right_node_as_leaf->values[i] = right_node_as_leaf->values[i+to_shift];
-                }
-                new_separator = left_node_as_leaf->keys[left_node->count+to_shift-1];
-            }
-            else {
-                InnerNode *left_node_as_inner = static_cast<InnerNode*>(left_node),
-                            *right_node_as_inner = static_cast<InnerNode*>(right_node);
-                // move key from parent
-                left_node_as_inner->keys[left_node->count-1] = parent->keys[left_slot];
-                // move to_shift-1 keys and children from right to left
-                for (uint16_t i=0; i<to_shift-1; ++i) {
-                    left_node_as_inner->keys[i+left_node->count] = right_node_as_inner->keys[i];
-                    left_node_as_inner->children[i+left_node->count] = right_node_as_inner->children[i];
-                }
-                // move the last child from left to right
-                left_node_as_inner->children[left_node->count+to_shift-1] = right_node_as_inner->children[to_shift-1];
-                // make the new "first" key from left node the new separator
-                new_separator = right_node_as_inner->keys[to_shift-1];
-                for (uint16_t i=0; i<right_node->count-to_shift; ++i) {
-                    right_node_as_inner->keys[i] = right_node_as_inner->keys[i+to_shift];
-                    right_node_as_inner->children[i] = right_node_as_inner->children[i+to_shift];
-                }
-            }
-            left_node->count+=to_shift;
-            right_node->count-=to_shift;
+            InnerNode &left_node_as_inner = *static_cast<InnerNode*>(left_node),
+                      &right_node_as_inner = *static_cast<InnerNode*>(right_node);
+            InnerNode::rebalance(left_node_as_inner, right_node_as_inner, separator);
         }
-        parent->keys[left_slot] = new_separator;
         neighboor_page.mark_dirty();
         child_page.mark_dirty();
         parent_page.mark_dirty();
-        if ((target <= new_separator && left_slot != child_slot) || (target > new_separator && left_slot == child_slot)) {
+        if ((target <= separator && left_slot != child_slot) || (target > separator && left_slot == child_slot)) {
             child_page = std::move(neighboor_page);
         }
     }
