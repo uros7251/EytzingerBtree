@@ -121,7 +121,7 @@ TEST(EytzingerTest, InnerNodeErase) {
         auto [index, found] = node->lower_bound(i);
         ASSERT_TRUE(found)
             << "k=" << i << " was not in the tree";
-        node->erase(index+1);
+        node->erase(index);
         std::tie(index, found) = node->lower_bound(i);
         ASSERT_FALSE(found)
             << "k=" << i << " was not removed from the tree";
@@ -148,7 +148,7 @@ TEST(EytzingerTest, InnerNodeEraseDecreasing) {
         auto [index, found] = node->lower_bound(i);
         ASSERT_TRUE(found)
             << "k=" << i << " was not in the tree";
-        node->erase(index+1);
+        node->erase(index);
         std::tie(index, found) = node->lower_bound(i);
         ASSERT_FALSE(found)
             << "k=" << i << " was not removed from the tree";
@@ -183,7 +183,7 @@ TEST(EytzingerTest, InnerNodeEraseRandomPermutation) {
         auto [index, found] = node->lower_bound(i);
         ASSERT_TRUE(found)
             << "k=" << i << " was not in the tree";
-        node->erase(index+1);
+        node->erase(index);
         std::tie(index, found) = node->lower_bound(i);
         ASSERT_FALSE(found)
             << "k=" << i << " was not removed from the tree";
