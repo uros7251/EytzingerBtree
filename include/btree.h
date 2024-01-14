@@ -3,6 +3,7 @@
 
 #include <type_traits>
 #include <forward_list>
+#include <bit>
 #include "segment.h"
 #include "buffer_manager.h"
 #include "swip.h"
@@ -16,7 +17,12 @@ namespace guidedresearch {
 // by prof. Neumann's article https://databasearchitects.blogspot.com/2022/06/btreeoperations.html
 //------------------------------------------------------------------------------------------------
 
-template<typename KeyT, typename ValueT, typename ComparatorT, size_t PageSize>
+enum class NodeLayout {
+    SORTED,
+    EYTZINGER
+};
+
+template<typename KeyT, typename ValueT, typename ComparatorT, size_t PageSize, NodeLayout layout = NodeLayout::SORTED>
 struct BTree : public Segment {
     struct Node {
         /// The level in the tree.
@@ -162,11 +168,10 @@ struct BTree : public Segment {
 
         /// Returns the keys.
         std::vector<KeyT> get_key_vector() {
-            return std::vector<KeyT>(&keys[0], &keys[0]+Node::count);
+            return std::vector<KeyT>(&keys[0], &keys[Node::count-1]);
         }
 
         static void rebalance(InnerNode &left, InnerNode &right, KeyT &separator) {
-            // make space for keys and values from the left
             if (left.count > right.count) {
                 uint16_t to_shift = (left.count-right.count)/2; // shift half the difference
                 // make space for keys and values from the left node
@@ -348,7 +353,6 @@ struct BTree : public Segment {
             }
         }
 
-
     private:
         void copy(const LeafNode &other) {
             Node::operator=(other);
@@ -526,7 +530,7 @@ struct BTree : public Segment {
         InnerNode &parent = *reinterpret_cast<InnerNode*>(parent_page->get_data());
         uint16_t left_slot;
         // determine which sibling to merge with
-        if (child_slot == 0) {
+        if (child_slot == 0) { // NEED FIX FOR EYTZINGER, we need leftmost key in sorted order
             // only right sibling exists
             Swip &swip = parent.children[1];
             neighboor_page.fix(swip);
@@ -534,11 +538,11 @@ struct BTree : public Segment {
             left_node = reinterpret_cast<Node*>(child_page->get_data());
             right_node = reinterpret_cast<Node*>(neighboor_page->get_data());
         }
-        else if (child_slot == parent.count-1) {
+        else if (child_slot == parent.count-1) { // NEED FIX FOR EYTZINGER, we need rightmost key in sorted order
             // only left sibling exists
             Swip &swip = parent.children[parent.count-2];
             neighboor_page.fix(swip);
-            left_slot = child_slot-1;
+            left_slot = child_slot-1; // NEED FIX FOR EYTZINGER, we need previous key in sorted order
             left_node = reinterpret_cast<Node*>(neighboor_page->get_data());
             right_node = reinterpret_cast<Node*>(child_page->get_data());
         }
@@ -556,7 +560,7 @@ struct BTree : public Segment {
             }
             else {
                 right_node = reinterpret_cast<Node*>(child_page->get_data());
-                left_slot = child_slot-1;
+                left_slot = child_slot-1; // NEED FIX FOR EYTZINGER, we need previous key in sorted order
                 neighboor_page = std::move(left_neighboor_page);
             }
         }
@@ -631,7 +635,579 @@ struct BTree : public Segment {
     }
     
 };
+
+template<typename KeyT, typename ValueT, typename ComparatorT, size_t PageSize>
+struct BTree<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::EYTZINGER> : public Segment {
+
+    using Node = BTree<KeyT,ValueT,ComparatorT,PageSize>::Node;
     
+    struct InnerNode: public Node {
+        struct Iterator {
+            uint32_t k;
+            uint16_t n;
+
+            Iterator() = delete;
+            Iterator(uint32_t k, uint16_t size) :k(k), n(size) {}
+
+            bool operator==(const Iterator &other) const = default;
+            uint32_t operator*() { return k; }
+            Iterator& operator++() {
+                if (2*k+1<n) {
+                    // go right
+                    k = 2*k+1;
+                    // then left as much as possible
+                    while (2*k<n) k = 2*k;
+                }
+                else {
+                    k = k >> (std::countr_one(k)+1); // climb up until you're the right child and then climb up one more time
+                }
+                return *this;
+            }
+
+            Iterator& operator--() {
+                if (2*k<n) {
+                    // go left
+                    k = 2*k;
+                    // then right as much as possible
+                    while (2*k+1<n) k = 2*k+1;
+                }
+                else {
+                    k = k >> (std::countr_zero(k)+1); // climb up until you're the left child and then climb up one more time
+                }
+                return *this;
+            }
+
+            static Iterator begin(uint16_t size) { assert(size); return Iterator((1u << (32 - std::countl_zero(size-1u))) >> 1, size); } // greatest power of 2 less than n
+            static Iterator end(uint16_t size)  { return Iterator(0u, size); }
+            static Iterator rbegin(uint16_t size) { return Iterator(((1u << (16 - std::countl_zero(size))) >> 1) - 1u, size); } // (greatest power of 2 not bigger than n) - 1
+            static Iterator rend(uint16_t size)  { return Iterator(0u, size); }
+        };
+
+        template<bool decreasing>
+        struct InOrderIterator {
+            /// current index
+            uint32_t k;
+            /// last index in in-order traversal
+            uint32_t last;
+            /// smallest invalid index
+            uint16_t n;
+
+            InOrderIterator() = delete;
+            InOrderIterator(uint16_t size)
+                :k((decreasing ? get_last(size) : get_first(size)) << 1),
+                last(decreasing ? get_first(size) : get_last(size)),
+                n(size) {}
+            InOrderIterator(uint16_t size, uint32_t start)
+                :k(start),
+                last(get_last(size)),
+                n(size) {}
+            
+            bool end() { return k == last; }
+            uint32_t next() {
+                assert(!end());
+                if (decreasing) {
+                    if (2*k<n) {
+                        // go left
+                        k = 2*k;
+                        // then right as much as possible
+                        while (2*k+1<n) k = 2*k+1;
+                        return k;
+                    }
+                    k = k >> (std::countr_zero(k)+1); // climb up until you're the left child and then climb up one more time
+                    return k;
+                }
+                else {
+                    if (2*k+1<n) {
+                        // go right
+                        k = 2*k+1;
+                        // then left as much as possible
+                        while (2*k<n) k = 2*k;
+                        return k;
+                    }
+                    k = k >> (std::countr_one(k)+1); // climb up until you're the right child and then climb up one more time
+                    return k;
+                }
+            }
+
+            private:
+            static uint32_t get_first(uint16_t n) {
+                assert(n);
+                return n > 1u ?
+                    1u << (31u - std::countl_zero(n-1u)) : // greatest power of 2 less than n
+                    0u;
+            }
+            static uint32_t get_last(uint16_t n) {
+                assert(n);
+                return n > 1u ?
+                    (1u << (15u - std::countl_zero(n)))-1u : // (greatest power of 2 not bigger than n) - 1
+                    0u;
+            }
+        };
+
+        struct ClassicInOrderIterator {
+            std::vector<uint32_t> stack;
+            uint16_t n;
+
+            ClassicInOrderIterator() = delete;
+            ClassicInOrderIterator(uint16_t size) :n(size) {
+                uint32_t i=1u;
+                while (i < n) {
+                    stack.push_back(i);
+                    i <<= 1;
+                }
+            }
+
+            uint32_t next() {
+                assert(!end());
+                uint32_t i = stack.back();
+                stack.pop_back();
+                uint32_t j = (i<<1) + 1;
+                while (j < n) {
+                    stack.push_back(j);
+                    j <<= 1;
+                }
+                return i;
+            }
+
+            bool end() { return stack.empty(); }
+        };
+        
+        /// The capacity of a node.
+        static constexpr uint32_t kCapacity = (PageSize-sizeof(Node))/(sizeof(KeyT)+sizeof(Swip))-1;
+
+        inline static constexpr uint32_t max_keys() { return kCapacity; }
+        inline static constexpr uint32_t max_children() { return kCapacity+1; }
+
+        /// The keys. Stored beginning with index 1.
+        KeyT keys[InnerNode::max_keys()+1]; // we leave first empty 
+        /// The children. Child associated with the key at index i is stored at position i-1. The remaining child is stored at the last position.
+        Swip children[InnerNode::max_children()]; 
+
+        /// Constructor.
+        InnerNode() : Node(0, 0) { }
+        InnerNode(uint16_t level) : Node(level, 0) {}
+
+        /// this method can be virtual, but we avoid that on purpose
+        /// @brief check if node is less than half full
+        /// @return 
+        bool merge_needed() const { return Node::count < max_children()/2; } 
+
+        std::pair<uint32_t, bool> lower_bound(const KeyT &key) {
+            // explained at https://en.algorithmica.org/hpc/data-structures/binary-search/
+
+            if (Node::count <= 1) return {0u, false}; // no keys
+            
+            ComparatorT less;
+            uint32_t i=1;
+            while (i < Node::count) {
+                i = 2*i + less(keys[i], key);
+            }
+
+            // recover index
+            i >>= std::countr_one(i)+1;
+
+            return i ? // check if last key is less than key
+                std::make_pair(i-1, keys[i] == key) :
+                std::make_pair(Node::count-1u, false); 
+        }
+
+        /// Insert a key.
+        /// @param[in] key          The key that should be inserted.
+        /// @param[in] child        The child that should be inserted.
+        void insert_split(const KeyT &key, Swip child) {
+            // for example, insert_split(3, 40)
+            // BEFORE: in_order(keys) = [1, 4, 9, ?], children = [8, 3, 13, 7, ?], count = 4
+            // AFTER: in_order(keys) = [1, 3, 4, 9], children = [8, 3, 40, 13, 7], count = 5
+            // idea is to create a temporary copy of keys and children, and then recreate a layout using this copy and new pair (key, child) as source
+            
+            assert(Node::count > 0); // inner node should have at least one child before inserting splits
+            assert(Node::count-1 != InnerNode::kCapacity); // more place available
+
+            // trivial case with no keys
+            if (Node::count == 1u) {
+                // no keys
+                keys[1] = key;
+                children[1] = child;
+                ++Node::count;
+                return;
+            }
+
+            // --------------------------------
+            auto last_swip = children[Node::count-1];
+            Iterator lead(Node::count, Node::count+1);
+            Iterator lag = lead;
+            ComparatorT less;
+            bool forward;
+            if (lead == Iterator::rbegin(Node::count+1)) forward = false;
+            else if (lead == Iterator::begin(Node::count+1)) forward = true;
+            else {
+                ++lead;
+                if (less(keys[*lead], key)) {
+                    forward = true;
+                    keys[*lag] = keys[*lead];
+                    children[(*lag)-1] = children[(*lead)-1];
+                    lag = lead;
+                }
+                else {
+                    forward = false;
+                    --lead;
+                }
+            }
+            assert(lag == lead);
+            if (forward) {
+                ++lead;
+                for (auto end = Iterator::end(Node::count+1); lead != end && less(keys[*lead], key); lag=lead, ++lead) {
+                    keys[*lag] = keys[*lead];
+                    children[(*lag)-1] = children[(*lead)-1];
+                }
+            }
+            else {
+                --lead;
+                for (auto end = Iterator::rend(Node::count+1); lead != end && less(key, keys[*lead]); lag=lead, --lead) {
+                    keys[*lag] = keys[*lead];
+                    children[(*lag)-1] = children[(*lead)-1];
+                }
+            }
+            keys[*lag] = key;
+            // update children
+            lead = lag, ++lead;
+            if (lead == Iterator::end(Node::count+1)) {
+                children[(*lag)-1] = last_swip;
+                children[Node::count] = child;
+            }
+            else {
+                children[(*lag)-1] = children[(*lead)-1];
+                children[(*lead)-1] = child;
+                children[Node::count] = last_swip;
+            }
+            ++Node::count;
+
+            // --------------------------------
+            /* // create copies of keys and swips
+            std::vector<KeyT> key_vec(&keys[0], &keys[Node::count]);
+            std::vector<Swip> swip_vec(&children[0], &children[Node::count]);
+
+            // create iterators which yield indices over old and new key array size
+            auto lag = Iterator::begin(Node::count), lead = Iterator::begin(Node::count+1);
+
+            ComparatorT less;
+            uint32_t i;
+            bool key_inserted = false;
+
+            // in-order traversal
+            for (auto end = Iterator::end(Node::count); lag != end; ++lag, ++lead) {
+                i = *lead;
+                auto j = *lag;
+                children[i-1] = swip_vec[j-1];
+                // if key is not already inserted and it's less than the current key
+                if (!key_inserted && less(key, keys[j])) {
+                    keys[i] = key;
+                    ++lead;
+                    i = *lead;
+                    children[i-1] = child;
+                    key_inserted = true;
+                }
+                keys[i] = key_vec[j];
+            }
+            if (lead == Iterator::end(Node::count+1)) {
+                children[Node::count] = swip_vec[Node::count-1];
+            }
+            else {
+                keys[*lead] = key;
+                children[(*lead)-1] = swip_vec[Node::count-1];
+                children[Node::count] = child;
+            }
+            ++Node::count; */
+        }
+
+        /// @brief Erases a key and a child associated with the next key
+        /// @param index Index of the key to be erased
+        void erase(uint16_t index) {
+            // for example, erase(1)
+            // BEFORE: keys = [1, 3, 4, 9], children = [8, 3, 40, 13, 7], count = 5
+            // AFTER: keys = [1, 4, 9, 9], children = [8, 3, 13, 7, 7], count = 4
+
+            // -------------------------------
+            Iterator lag(index, Node::count);
+            Iterator lead = lag;
+            ComparatorT less;
+            if (lead == Iterator::rbegin(Node::count)) {
+                children[Node::count-1] = children[(*lead)-1];
+            }
+            else {
+                ++lead;
+                children[(*lead)-1] = children[(*lag)-1];
+            }
+            if (less(keys[index], keys[Node::count-1])) {
+                // go right
+                for (; *lag != Node::count-1u; lag=lead, ++lead) {
+                    keys[*lag] = keys[*lead];
+                    children[(*lag)-1] = children[(*lead)-1];
+                }
+            }
+            else {
+                // go left
+                lead = lag; --lead;
+                for (; *lag != Node::count-1u; lag=lead, --lead) {
+                    keys[*lag] = keys[*lead];
+                    children[(*lag)-1] = children[(*lead)-1];
+                }
+            }
+            children[Node::count-2] = children[Node::count-1];
+            --Node::count;
+            // -------------------------------
+            /* // create copies of keys and swips
+            std::vector<KeyT> key_vec(&keys[0], &keys[Node::count]);
+            std::vector<Swip> swip_vec(&children[0], &children[Node::count]);
+
+            // create iterators which yield indices over old and new key array size
+            InOrderIterator<false> old_iter(Node::count), new_iter(Node::count-1);
+
+            while (!new_iter.end()) {
+                auto i = new_iter.next(), j = old_iter.next();
+                children[i-1] = swip_vec[j-1];
+                if (j == index) {
+                    keys[i] = key_vec[old_iter.next()];
+                }
+                else {
+                    keys[i] = key_vec[j];
+                }
+            }
+            if (old_iter.end()) {
+                children[Node::count-2] = swip_vec[Node::count-1];
+            }
+            else {
+                children[Node::count-2] = swip_vec[old_iter.next()-1];
+            }
+            --Node::count; */
+        }
+
+        /// Split the node.
+        /// @param[in] buffer       The buffer for the new page.
+        /// @return                 The separator key.
+        KeyT split(char* buffer) {
+            InnerNode* new_node = new (buffer) InnerNode(Node::level);
+            //new_node->count = Node::count;
+            // old_node retains floor((count-1)/2) keys
+            // new_node gets floor(count/2)-1 keys
+            uint16_t left_node_count = (Node::count+1)/2, right_node_count = Node::count/2;
+            assert(left_node_count+right_node_count==Node::count);
+            // -------------------------------
+            Iterator old_it = Iterator::rbegin(Node::count), left_it = Iterator::rbegin(left_node_count), right_it = Iterator::rbegin(right_node_count);
+            new_node->children[right_node_count-1] = children[Node::count-1];
+            for (auto i=0; i<right_node_count-1; ++i, --old_it, --right_it) {
+                new_node->keys[*right_it] = keys[*old_it];
+                new_node->children[(*right_it)-1] = children[(*old_it)-1];
+            }
+            assert(right_it == Iterator::rend(right_node_count));
+            
+            auto separator = keys[*old_it];
+            auto separator_swip = children[(*old_it)-1];
+            --old_it;
+            for (auto i=0; i<left_node_count-1; ++i, --old_it, --left_it) {
+                keys[*left_it] = keys[*old_it];
+                children[(*left_it)-1] = children[(*old_it)-1];
+            }
+            assert(left_it == Iterator::rend(left_node_count));
+            assert(old_it == Iterator::rend(Node::count));
+            children[left_node_count-1] = separator_swip;
+            Node::count = left_node_count;
+            new_node->count = right_node_count;
+            auto rpids = new_node->get_sorted_pids(), lpids = get_sorted_pids();
+            return separator;
+            // -------------------------------
+            /* InOrderIterator<false> old_node_iter(Node::count), left_node_iter(left_node_count), right_node_iter(right_node_count);
+            // write smaller half to the second half of the new node
+            uint32_t j, k;
+            while (!left_node_iter.end()) {
+                assert(!old_node_iter.end());
+                j = right_node_count+left_node_iter.next(), k = old_node_iter.next();
+                new_node->keys[j] = keys[k];
+                new_node->children[j-1] = children[k-1];
+            }
+            k = old_node_iter.next();
+            auto separator = keys[k];
+            new_node->children[Node::count-1] = children[k-1];
+            // write bigger half to the first half of the new node
+            while (!right_node_iter.end()) {
+                j = right_node_iter.next(), k = old_node_iter.next();
+                new_node->keys[j] = keys[k];
+                new_node->children[j-1] = children[k-1]; 
+            }
+            assert(old_node_iter.end());
+            new_node->children[right_node_count-1] = children[Node::count-1];
+            // copy smaller half back to the original node
+            for (auto i=1u; i<left_node_count; ++i) {
+                keys[i] = new_node->keys[i+right_node_count];
+                children[i-1] = new_node->children[i+right_node_count-1];
+            }
+            children[left_node_count-1] = new_node->children[Node::count-1];
+            // update counts
+            Node::count = left_node_count;
+            new_node->count = right_node_count;
+            auto rpids = new_node->get_sorted_pids(), lpids = get_sorted_pids();
+            return separator; */
+        }
+
+        void merge(InnerNode &other, const KeyT &old_separator) {
+            // -------------------------------
+            Iterator left_it = Iterator::begin(Node::count), right_it = Iterator::begin(other.count), merge_it = Iterator::begin(Node::count+other.count);
+            // make a copy of the last child of left node because it might be overwritten
+            Swip last_swip = children[Node::count-1];
+            // rearrange children in left node
+            for (auto i=0; i<Node::count-1; ++i, ++left_it, ++merge_it) {
+                keys[*merge_it] = keys[*left_it];
+                children[(*merge_it)-1] = children[(*left_it)-1];
+            }
+            assert(left_it == Iterator::end(Node::count));
+            // insert old separator
+            keys[*merge_it] = old_separator;
+            children[(*merge_it)-1] = last_swip;
+            ++merge_it;
+            // insert children from right node
+            for (auto i=0; i<other.count-1; ++i, ++right_it, ++merge_it) {
+                keys[*merge_it] = other.keys[*right_it];
+                children[(*merge_it)-1] = other.children[(*right_it)-1];
+            }
+            assert(right_it == Iterator::end(other.count));
+            children[Node::count+other.count-1] = other.children[other.count-1];
+            // update counts
+            Node::count += other.count;
+            other.count = 0;
+            // -------------------------------
+            /* InOrderIterator<false> merged_iter(Node::count+other.count), left_iter(Node::count), right_iter(other.count);
+            uint32_t i, j;
+            // make a copy of the last child of left node because it might be overwritten
+            Swip last_left = children[Node::count-1];
+            // rearrange children in left node
+            while (!left_iter.end()) {
+                i = merged_iter.next(), j = left_iter.next();
+                keys[i] = keys[j];
+                children[i-1] = children[j-1];
+            }
+            // insert old separator
+            i = merged_iter.next();
+            keys[i] = old_separator;
+            children[i-1] = last_left;
+            // insert children from right node
+            while (!right_iter.end()) {
+                i = merged_iter.next(), j = right_iter.next();
+                keys[i] = other.keys[j];
+                children[i-1] = other.children[j-1];
+            }
+            assert(merged_iter.end());
+            children[Node::count+other.count-1] = other.children[other.count-1];
+            // update counts
+            Node::count += other.count;
+            other.count = 0; */
+        }
+
+        /// Returns the keys.
+        std::vector<KeyT> get_key_vector() {
+            return std::vector<KeyT>(&keys[1], &keys[Node::count]);
+        }
+
+        std::vector<uint64_t> get_sorted_pids() {
+            std::vector<uint64_t> sorted_pids;
+            sorted_pids.reserve(Node::count);
+            for (InOrderIterator<false> iter(Node::count); !iter.end();) {
+                sorted_pids.push_back(children[iter.next()-1].asPageID());
+            }
+            sorted_pids.push_back(children[Node::count-1].asPageID());
+            return sorted_pids;
+        }
+
+        /// Returns the keys in sorted order
+        std::vector<KeyT> get_sorted_keys() {
+            std::vector<KeyT> sorted_keys;
+            sorted_keys.reserve(Node::count-1);
+            for (InOrderIterator<false> iter(Node::count); !iter.end(); ) {
+                sorted_keys.push_back(keys[iter.next()]);
+            }
+            return sorted_keys;
+        }
+
+        static void rebalance(InnerNode &left, InnerNode &right, KeyT &separator) {
+            if (left.count > right.count) {
+                // shift right
+                uint16_t to_shift = (left.count-right.count)/2; // shift half the difference
+                Iterator old_right_it = Iterator::rbegin(right.count), new_right_it = Iterator::rbegin(right.count+to_shift),
+                         old_left_it = Iterator::rbegin(left.count), new_left_it = Iterator::rbegin(left.count-to_shift);
+                // make space for keys and children from left node
+                right.children[right.count+to_shift-1] = right.children[right.count-1];
+                for (int i=0; i<right.count-1; ++i, --old_right_it, --new_right_it) {
+                    right.keys[*new_right_it] = right.keys[*old_right_it];
+                    right.children[(*new_right_it)-1] = right.children[(*old_right_it)-1];
+                }
+                assert(old_right_it == Iterator::rend(right.count));
+                // insert separator and last child of the left node
+                right.keys[*new_right_it] = separator;
+                right.children[(*new_right_it)-1] = left.children[left.count-1];
+                --new_right_it;
+                // insert keys and children from left node
+                for (int i=0; i<to_shift-1; ++i, --old_left_it, --new_right_it) {
+                    right.keys[*new_right_it] = left.keys[*old_left_it];
+                    right.children[(*new_right_it)-1] = left.children[(*old_left_it)-1];
+                }
+                assert(new_right_it == Iterator::rend(right.count+to_shift));
+                // update separator
+                separator = left.keys[*old_left_it];
+                auto separator_swip = left.children[(*old_left_it)-1];
+                --old_left_it;
+                // rearrange keys and children in left node
+                for (int i=0; i<left.count-to_shift-1; ++i, --old_left_it, --new_left_it) {
+                    left.keys[*new_left_it] = left.keys[*old_left_it];
+                    left.children[(*new_left_it)-1] = left.children[(*old_left_it)-1];
+                }
+                assert(old_left_it == Iterator::rend(left.count));
+                assert(new_left_it == Iterator::rend(left.count-to_shift));
+                left.children[left.count-to_shift-1] = separator_swip;
+                // update counts
+                left.count -= to_shift;
+                right.count += to_shift;
+            }
+            else {
+                // shift left
+                uint16_t to_shift = (right.count-left.count)/2; // shift half the difference
+                Iterator old_right_it = Iterator::begin(right.count), new_right_it = Iterator::begin(right.count-to_shift),
+                         old_left_it = Iterator::begin(left.count), new_left_it = Iterator::begin(left.count+to_shift);
+                // make space for keys and children from left node
+                auto last_swip = left.children[left.count-1];
+                for (int i=0; i<left.count-1; ++i, ++old_left_it, ++new_left_it) {
+                    left.keys[*new_left_it] = left.keys[*old_left_it];
+                    left.children[(*new_left_it)-1] = left.children[(*old_left_it)-1];
+                }
+                assert(old_left_it == Iterator::end(left.count));
+                // insert separator and last child of the left node
+                left.keys[*new_left_it] = separator;
+                left.children[(*new_left_it)-1] = last_swip;
+                ++new_left_it;
+                // insert keys and children from right node
+                for (int i=0; i<to_shift-1; ++i, ++old_right_it, ++new_left_it) {
+                    left.keys[*new_left_it] = right.keys[*old_right_it];
+                    left.children[(*new_left_it)-1] = right.children[(*old_right_it)-1];
+                }
+                assert(new_left_it == Iterator::end(left.count+to_shift));
+                // update separator
+                separator = right.keys[*old_right_it];
+                left.children[left.count+to_shift-1] = right.children[(*old_right_it)-1];
+                ++old_right_it;
+                // rearrange keys and children in right node
+                for (int i=0; i<right.count-to_shift-1; ++i, ++old_right_it, ++new_right_it) {
+                    right.keys[*new_right_it] = right.keys[*old_right_it];
+                    right.children[(*new_right_it)-1] = right.children[(*old_right_it)-1];
+                }
+                assert(old_right_it == Iterator::end(right.count));
+                assert(new_right_it == Iterator::end(right.count-to_shift));
+                right.children[right.count-to_shift-1] = right.children[right.count-1];
+                // update counts
+                left.count += to_shift;
+                right.count -= to_shift;
+            }
+        }
+    };
+
+};
 }  // namespace guidedresearch
 
 #endif

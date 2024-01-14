@@ -2,7 +2,7 @@
 # Files
 # ---------------------------------------------------------------------------
 
-set(TEST_CC test/bm_test.cc test/btree_test.cc)
+set(TEST_CC test/bm_test.cc test/btree_test.cc test/eytzinger_test.cc)
 
 # ---------------------------------------------------------------------------
 # Tester

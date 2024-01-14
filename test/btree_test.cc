@@ -13,7 +13,7 @@
 using BufferFrame = guidedresearch::BufferFrame;
 using BufferManager = guidedresearch::BufferManager;
 using Defer = guidedresearch::Defer;
-using BTree = guidedresearch::BTree<uint64_t, uint64_t, std::less<uint64_t>, 1024>;
+using BTree = guidedresearch::BTree<uint64_t, uint64_t, std::less<uint64_t>, 1024, guidedresearch::NodeLayout::SORTED>;
 
 namespace {
 
@@ -30,7 +30,7 @@ TEST(BTreeTest, Capacity) {
    ASSERT_LE(sizeof(BTree::LeafNode), 1024);
    
    // Larger buffer pages allow nodes with higher fanout
-   using BTree = guidedresearch::BTree<uint64_t, uint64_t, std::less<uint64_t>, 1u << 16>;
+   using BTree = guidedresearch::BTree<uint64_t, uint64_t, std::less<uint64_t>, 1u << 16, guidedresearch::NodeLayout::SORTED>;
    ASSERT_LE(64000, sizeof(BTree::InnerNode));
    ASSERT_LE(sizeof(BTree::InnerNode), 1u << 16);
    
@@ -124,8 +124,8 @@ TEST(BTreeTest, LeafNodeSplit) {
 
     // Now split the left node
     auto separator = left_node->split(buffer_right.data());
-    ASSERT_EQ(left_node->count, n / 2 + 1);
-    ASSERT_EQ(right_node->count, n - (n / 2) - 1);
+    ASSERT_EQ(left_node->count, (n + 1) / 2);
+    ASSERT_EQ(right_node->count, n / 2);
     ASSERT_EQ(separator, n / 2);
 
     // Check keys & children of the left node
