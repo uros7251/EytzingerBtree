@@ -25,6 +25,7 @@ find_package(Threads REQUIRED)
 
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 
+include("${CMAKE_SOURCE_DIR}/cmake/clang-tidy.cmake")
 include("${CMAKE_SOURCE_DIR}/vendor/googletest.cmake")
 
 # ---------------------------------------------------------------------------
@@ -65,3 +66,15 @@ target_link_libraries(bench grlib)
 # ---------------------------------------------------------------------------
 
 include("${CMAKE_SOURCE_DIR}/test/local.cmake")
+
+# ---------------------------------------------------------------------------
+# Linting
+# ---------------------------------------------------------------------------
+
+add_clang_tidy_target(src_linting "${SRC_CC}")
+add_clang_tidy_target(include_linting "${INCLUDE_H}")
+add_clang_tidy_target(test_linting "${TEST_CC}")
+
+add_custom_target(lint)
+list(APPEND lint_targets include_linting src_linting test_linting)
+add_dependencies(lint ${lint_targets})
