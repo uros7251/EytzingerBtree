@@ -13,7 +13,7 @@
 using BufferFrame = guidedresearch::BufferFrame;
 using BufferManager = guidedresearch::BufferManager;
 using Defer = guidedresearch::Defer;
-using BTree = guidedresearch::BTree<uint64_t, uint64_t, std::less<uint64_t>, 1024, guidedresearch::NodeLayout::SORTED>;
+using BTree = guidedresearch::BTree<uint64_t, uint64_t, std::less<uint64_t>, 1024, guidedresearch::NodeLayout::EYTZINGER>;
 
 namespace {
 
