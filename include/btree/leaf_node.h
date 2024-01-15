@@ -78,7 +78,7 @@ struct LeafNode: public guidedresearch::Node<KeyT, ValueT, ComparatorT, PageSize
         // old_node retains ceil(count/2) keys
         // new_node gets floor(count/2) keys
         // move keys and values starting from index ceil(count/2), in total floor(count/2)
-        for (auto i=0u, pos=(Node::count+1)/2; i<Node::count/2; ++i) {
+        for (auto i=0, pos=(Node::count+1)/2; i<Node::count/2; ++i) {
             new_node->keys[i] = keys[pos+i];
             new_node->values[i] = values[pos+i];
         }

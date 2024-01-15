@@ -6,12 +6,12 @@
 namespace guidedresearch {
 
 class UniquePage : public PageGuard {
-    bool dirty;
+    bool dirty = false;
 
     void reset() { page = nullptr; dirty = false; }
 public:
     UniquePage(BufferManager& bm) : PageGuard(bm, nullptr) {}
-    UniquePage(UniquePage&& other) : PageGuard(other.bm, other.page) {
+    UniquePage(UniquePage&& other) : PageGuard(other.bm, other.page), dirty(other.dirty) {
         other.reset();
     }
     UniquePage(const UniquePage& other) = delete;

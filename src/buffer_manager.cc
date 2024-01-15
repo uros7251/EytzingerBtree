@@ -13,7 +13,7 @@ BufferFrame::BufferFrame(u64 pid) noexcept : pid(pid) {
 }
 
 BufferFrame::BufferFrame(BufferFrame&& o) noexcept
-   : pid(o.pid), exclusive(o.exclusive), dirty(o.dirty), data(move(o.data)) {
+   : pid(o.pid), exclusive(o.exclusive), dirty(o.dirty), data(std::move(o.data)) {
 
 }
 
@@ -21,7 +21,7 @@ BufferFrame& BufferFrame::operator=(BufferFrame&& o) noexcept {
    pid = o.pid;
    exclusive = o.exclusive;
    dirty = o.dirty;
-   data = move(o.data);
+   data = std::move(o.data);
    return *this;
 };
 

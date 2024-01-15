@@ -92,7 +92,7 @@ struct BTree : public Segment {
             auto [index, match] = child_as_inner->lower_bound(key);
             Swip &swip = child_as_inner->children[index]; // it's crucial that swip is a reference
             parent_page = std::move(child_page);
-            child_page.fix(swip);
+            child_page = UniquePage(buffer_manager, swip);
             child = reinterpret_cast<Node*>(child_page->get_data());
         }
         // at the bottom
