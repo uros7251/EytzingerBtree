@@ -126,7 +126,7 @@ TEST(BTreeTest, LeafNodeSplit) {
     auto separator = left_node->split(buffer_right.data());
     ASSERT_EQ(left_node->count, (n + 1) / 2);
     ASSERT_EQ(right_node->count, n / 2);
-    ASSERT_EQ(separator, n / 2);
+    ASSERT_EQ(separator, (n - 1) / 2);
 
     // Check keys & children of the left node
     left_keys = left_node->get_key_vector();
