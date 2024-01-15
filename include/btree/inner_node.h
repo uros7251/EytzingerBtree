@@ -358,8 +358,7 @@ struct InnerNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::EYTZINGER> : p
         // for example, insert_split(3, 40)
         // BEFORE: in_order(keys) = [1, 4, 9, ?], children = [8, 3, 13, 7, ?], count = 4
         // AFTER: in_order(keys) = [1, 3, 4, 9], children = [8, 3, 40, 13, 7], count = 5
-        // idea is to create a temporary copy of keys and children, and then recreate a layout using this copy and new pair (key, child) as source
-        
+
         assert(Node::count > 0); // inner node should have at least one child before inserting splits
         assert(Node::count-1 != InnerNode::kCapacity); // more place available
 
@@ -373,11 +372,16 @@ struct InnerNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::EYTZINGER> : p
             return;
         }
 
-        // --------------------------------
+        // idea is to logically insert a (key, child) pair into the node and then move it to the right place.
+        // we start at the index Node::count (which was previously empty) and first determine if to-be-inserted
+        // key should be placed to the left or to the right of it in ascending order (note: if i<j, it might be that 
+        // in_order(i) > in_order(j))
+
         Iterator lead(Node::count, Node::count+1);
         Iterator lag = lead;
         ComparatorT less;
         bool forward;
+        // determine if we should go forward or backward in in-order traversal
         if (lead == Iterator::rbegin(Node::count+1)) forward = false;
         else if (lead == Iterator::begin(Node::count+1)) forward = true;
         else {
@@ -420,43 +424,6 @@ struct InnerNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::EYTZINGER> : p
             children[*lead] = child;
         }
         ++Node::count;
-
-        // --------------------------------
-        /* // create copies of keys and swips
-        std::vector<KeyT> key_vec(&keys[0], &keys[Node::count]);
-        std::vector<Swip> swip_vec(&children[0], &children[Node::count]);
-
-        // create iterators which yield indices over old and new key array size
-        auto lag = Iterator::begin(Node::count), lead = Iterator::begin(Node::count+1);
-
-        ComparatorT less;
-        uint32_t i;
-        bool key_inserted = false;
-
-        // in-order traversal
-        for (auto end = Iterator::end(Node::count); lag != end; ++lag, ++lead) {
-            i = *lead;
-            auto j = *lag;
-            children[i-1] = swip_vec[j-1];
-            // if key is not already inserted and it's less than the current key
-            if (!key_inserted && less(key, keys[j])) {
-                keys[i] = key;
-                ++lead;
-                i = *lead;
-                children[i-1] = child;
-                key_inserted = true;
-            }
-            keys[i] = key_vec[j];
-        }
-        if (lead == Iterator::end(Node::count+1)) {
-            children[Node::count] = swip_vec[Node::count-1];
-        }
-        else {
-            keys[*lead] = key;
-            children[(*lead)-1] = swip_vec[Node::count-1];
-            children[Node::count] = child;
-        }
-        ++Node::count; */
     }
 
     /// @brief Erases a key and a child associated with the next key
@@ -466,7 +433,6 @@ struct InnerNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::EYTZINGER> : p
         // BEFORE: keys = [1, 3, 4, 9], children = [8, 3, 40, 13, 7], count = 5
         // AFTER: keys = [1, 4, 9, 9], children = [8, 3, 13, 7, 7], count = 4
 
-        // -------------------------------
         Iterator lag(index, Node::count);
         Iterator lead = lag;
         ComparatorT less;
@@ -494,31 +460,6 @@ struct InnerNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::EYTZINGER> : p
             }
         }
         --Node::count;
-        // -------------------------------
-        /* // create copies of keys and swips
-        std::vector<KeyT> key_vec(&keys[0], &keys[Node::count]);
-        std::vector<Swip> swip_vec(&children[0], &children[Node::count]);
-
-        // create iterators which yield indices over old and new key array size
-        InOrderIterator<false> old_iter(Node::count), new_iter(Node::count-1);
-
-        while (!new_iter.end()) {
-            auto i = new_iter.next(), j = old_iter.next();
-            children[i-1] = swip_vec[j-1];
-            if (j == index) {
-                keys[i] = key_vec[old_iter.next()];
-            }
-            else {
-                keys[i] = key_vec[j];
-            }
-        }
-        if (old_iter.end()) {
-            children[Node::count-2] = swip_vec[Node::count-1];
-        }
-        else {
-            children[Node::count-2] = swip_vec[old_iter.next()-1];
-        }
-        --Node::count; */
     }
 
     /// Split the node.
@@ -531,7 +472,7 @@ struct InnerNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::EYTZINGER> : p
         // new_node gets floor(count/2)-1 keys
         uint16_t left_node_count = (Node::count+1)/2, right_node_count = Node::count/2;
         assert(left_node_count+right_node_count==Node::count);
-        // -------------------------------
+        
         Iterator old_it = Iterator::rbegin(Node::count), left_it = Iterator::rbegin(left_node_count), right_it = Iterator::rbegin(right_node_count);
         new_node->children[0] = children[0];
         for (auto i=0; i<right_node_count-1; ++i, --old_it, --right_it) {
@@ -554,42 +495,9 @@ struct InnerNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::EYTZINGER> : p
         new_node->count = right_node_count;
         auto rpids = new_node->get_sorted_pids(), lpids = get_sorted_pids();
         return separator;
-        // -------------------------------
-        /* InOrderIterator<false> old_node_iter(Node::count), left_node_iter(left_node_count), right_node_iter(right_node_count);
-        // write smaller half to the second half of the new node
-        uint32_t j, k;
-        while (!left_node_iter.end()) {
-            assert(!old_node_iter.end());
-            j = right_node_count+left_node_iter.next(), k = old_node_iter.next();
-            new_node->keys[j] = keys[k];
-            new_node->children[j-1] = children[k-1];
-        }
-        k = old_node_iter.next();
-        auto separator = keys[k];
-        new_node->children[Node::count-1] = children[k-1];
-        // write bigger half to the first half of the new node
-        while (!right_node_iter.end()) {
-            j = right_node_iter.next(), k = old_node_iter.next();
-            new_node->keys[j] = keys[k];
-            new_node->children[j-1] = children[k-1]; 
-        }
-        assert(old_node_iter.end());
-        new_node->children[right_node_count-1] = children[Node::count-1];
-        // copy smaller half back to the original node
-        for (auto i=1u; i<left_node_count; ++i) {
-            keys[i] = new_node->keys[i+right_node_count];
-            children[i-1] = new_node->children[i+right_node_count-1];
-        }
-        children[left_node_count-1] = new_node->children[Node::count-1];
-        // update counts
-        Node::count = left_node_count;
-        new_node->count = right_node_count;
-        auto rpids = new_node->get_sorted_pids(), lpids = get_sorted_pids();
-        return separator; */
     }
 
     void merge(InnerNode &other, const KeyT &old_separator) {
-        // -------------------------------
         Iterator left_it = Iterator::begin(Node::count), right_it = Iterator::begin(other.count), merge_it = Iterator::begin(Node::count+other.count);
         // rearrange children in left node
         for (auto i=0; i<Node::count-1; ++i, ++left_it, ++merge_it) {
@@ -611,32 +519,6 @@ struct InnerNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::EYTZINGER> : p
         // update counts
         Node::count += other.count;
         other.count = 0;
-        // -------------------------------
-        /* InOrderIterator<false> merged_iter(Node::count+other.count), left_iter(Node::count), right_iter(other.count);
-        uint32_t i, j;
-        // make a copy of the last child of left node because it might be overwritten
-        Swip last_left = children[Node::count-1];
-        // rearrange children in left node
-        while (!left_iter.end()) {
-            i = merged_iter.next(), j = left_iter.next();
-            keys[i] = keys[j];
-            children[i-1] = children[j-1];
-        }
-        // insert old separator
-        i = merged_iter.next();
-        keys[i] = old_separator;
-        children[i-1] = last_left;
-        // insert children from right node
-        while (!right_iter.end()) {
-            i = merged_iter.next(), j = right_iter.next();
-            keys[i] = other.keys[j];
-            children[i-1] = other.children[j-1];
-        }
-        assert(merged_iter.end());
-        children[Node::count+other.count-1] = other.children[other.count-1];
-        // update counts
-        Node::count += other.count;
-        other.count = 0; */
     }
 
     uint32_t first_sorted() { return *Iterator::begin(Node::count); }
