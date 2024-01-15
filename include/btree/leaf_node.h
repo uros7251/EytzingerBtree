@@ -1,8 +1,7 @@
 #ifndef INCLUDE_LEAF_NODE_H_
 #define INCLUDE_LEAF_NODE_H_
 
-#include "swip.h"
-#include "node.h"
+#include "btree/node.h"
 
 namespace guidedresearch {
 

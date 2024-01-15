@@ -1,7 +1,7 @@
 #ifndef INCLUDE_PAGE_GUARD
 #define INCLUDE_PAGE_GUARD
 
-#include "buffer_manager.h"
+#include "buffer_manager/buffer_manager.h"
 
 namespace guidedresearch {
 

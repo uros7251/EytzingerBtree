@@ -1,6 +1,3 @@
-#include "buffer_manager.h"
-#include "swip.h"
-#include "btree.h"
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
@@ -10,6 +7,7 @@
 #include <random>
 #include <thread>
 #include <vector>
+#include "buffer_manager/buffer_manager.h"
 
 namespace {
 

@@ -9,7 +9,7 @@
 #include <list>
 #include <shared_mutex>
 #include <mutex>
-#include "swip.h"
+#include "buffer_manager/swip.h"
 
 namespace guidedresearch {
 

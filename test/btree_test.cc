@@ -8,7 +8,7 @@
 #include <thread>
 #include <vector>
 #include "defer.h"
-#include "btree.h"
+#include "btree/btree.h"
 
 using BufferFrame = guidedresearch::BufferFrame;
 using BufferManager = guidedresearch::BufferManager;

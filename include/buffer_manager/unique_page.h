@@ -1,7 +1,7 @@
 #ifndef INCLUDE_UNIQUE_PAGE
 #define INCLUDE_UNIQUE_PAGE
 
-#include "page_guard.h"
+#include "buffer_manager/page_guard.h"
 
 namespace guidedresearch {
 

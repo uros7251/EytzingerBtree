@@ -4,11 +4,10 @@
 #include <type_traits>
 #include <forward_list>
 #include "segment.h"
-#include "buffer_manager.h"
-#include "unique_page.h"
-#include "shared_page.h"
-#include "inner_node.h"
-#include "leaf_node.h"
+#include "buffer_manager/unique_page.h"
+#include "buffer_manager/shared_page.h"
+#include "btree/inner_node.h"
+#include "btree/leaf_node.h"
 
 namespace guidedresearch {
 

@@ -2,8 +2,8 @@
 #define INCLUDE_INNER_NODE_H
 
 #include <bit>
-#include <node.h>
-#include <swip.h>
+#include <buffer_manager/swip.h>
+#include <btree/node.h>
 
 namespace guidedresearch {
 

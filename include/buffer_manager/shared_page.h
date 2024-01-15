@@ -1,7 +1,7 @@
 #ifndef INCLUDE_SHARED_PAGE
 #define INCLUDE_SHARED_PAGE
 
-#include "page_guard.h"
+#include "buffer_manager/page_guard.h"
 
 namespace guidedresearch {
 

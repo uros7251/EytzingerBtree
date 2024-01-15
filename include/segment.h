@@ -1,7 +1,7 @@
 #ifndef INCLUDE_GUIDED_RESEARCH_SEGMENT_H_
 #define INCLUDE_GUIDED_RESEARCH_SEGMENT_H_
 
-#include "buffer_manager.h"
+#include "buffer_manager/buffer_manager.h"
 #include <array>
 #include <optional>
 

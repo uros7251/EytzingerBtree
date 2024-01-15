@@ -34,6 +34,8 @@ include("${CMAKE_SOURCE_DIR}/vendor/googletest.cmake")
 include("${CMAKE_SOURCE_DIR}/include/local.cmake")
 include_directories(
     ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/btree
+    ${CMAKE_SOURCE_DIR}/include/buffer_manager
 )
 
 include_directories(SYSTEM
