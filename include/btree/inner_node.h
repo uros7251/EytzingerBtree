@@ -65,8 +65,7 @@ struct InnerNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED> : publ
         return *this;
     }
 
-    /// this method can be virtual, but we avoid that on purpose
-    /// @brief check if node is less than half full
+    /// @brief check if node is less than half full (this method can be virtual, but we avoid that on purpose)
     /// @return 
     bool merge_needed() const { return Node::count < max_children()/2; } 
 
