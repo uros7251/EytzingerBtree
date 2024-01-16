@@ -195,8 +195,10 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, true> : public guidedresear
         // branchless binary search
         while (n>1) {
             auto half = n/2;
-            i += less(keys[indices[i+half-1]], key) * half; // hopefully compiler translates this to cmov
             n -= half; // ceil(n/2)
+            __builtin_prefetch(&indices[i+n/2-1]); // prefetch left
+            __builtin_prefetch(&indices[i+half+n/2-1]); // prefetch right
+            i += less(keys[indices[i+half-1]], key) * half; // hopefully compiler translates this to cmov
         }
 
         return i==Node::count-1u && less(keys[indices[i]], key) ? // check if last key is less than key

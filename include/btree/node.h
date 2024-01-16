@@ -35,8 +35,10 @@ struct Node {
         // branchless binary search
         while (n>1) {
             auto half = n/2;
-            i += less(keys[i+half-1], key) * half; // hopefully compiler translates this to cmov
             n -= half; // ceil(n/2)
+            __builtin_prefetch(&keys[i+n/2-1]); // prefetch left
+            __builtin_prefetch(&keys[i+half+n/2-1]); // prefetch right
+            i += less(keys[i+half-1], key) * half; // hopefully compiler translates this to cmov
         }
 
         return ((!is_leaf() && i==Node::count-2u) || (is_leaf() && i==Node::count-1u)) && less(keys[i], key) ? // check if last key is less than key

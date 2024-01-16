@@ -339,6 +339,7 @@ struct InnerNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::EYTZINGER> : p
         ComparatorT less;
         uint32_t i=1;
         while (i < Node::count) {
+            __builtin_prefetch(&keys[2*i]);
             i = 2*i + less(keys[i], key);
         }
 
