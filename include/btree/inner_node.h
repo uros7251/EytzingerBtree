@@ -246,67 +246,6 @@ struct InnerNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::EYTZINGER> : p
         static Iterator rbegin(uint16_t size) { return Iterator(((1u << (16 - std::countl_zero(size))) >> 1) - 1u, size); } // (greatest power of 2 not bigger than n) - 1
         static Iterator rend(uint16_t size)  { return Iterator(0u, size); }
     };
-
-    template<bool decreasing>
-    struct InOrderIterator {
-        /// current index
-        uint32_t k;
-        /// last index in in-order traversal
-        uint32_t last;
-        /// smallest invalid index
-        uint16_t n;
-
-        InOrderIterator() = delete;
-        InOrderIterator(uint16_t size)
-            :k((decreasing ? get_last(size) : get_first(size)) << 1),
-            last(decreasing ? get_first(size) : get_last(size)),
-            n(size) {}
-        InOrderIterator(uint16_t size, uint32_t start)
-            :k(start),
-            last(get_last(size)),
-            n(size) {}
-        
-        bool end() { return k == last; }
-        uint32_t next() {
-            assert(!end());
-            if (decreasing) {
-                if (2*k<n) {
-                    // go left
-                    k = 2*k;
-                    // then right as much as possible
-                    while (2*k+1<n) k = 2*k+1;
-                    return k;
-                }
-                k = k >> (std::countr_zero(k)+1); // climb up until you're the left child and then climb up one more time
-                return k;
-            }
-            else {
-                if (2*k+1<n) {
-                    // go right
-                    k = 2*k+1;
-                    // then left as much as possible
-                    while (2*k<n) k = 2*k;
-                    return k;
-                }
-                k = k >> (std::countr_one(k)+1); // climb up until you're the right child and then climb up one more time
-                return k;
-            }
-        }
-
-        private:
-        static uint32_t get_first(uint16_t n) {
-            assert(n);
-            return n > 1u ?
-                1u << (31u - std::countl_zero(n-1u)) : // greatest power of 2 less than n
-                0u;
-        }
-        static uint32_t get_last(uint16_t n) {
-            assert(n);
-            return n > 1u ?
-                (1u << (15u - std::countl_zero(n)))-1u : // (greatest power of 2 not bigger than n) - 1
-                0u;
-        }
-    };
     
     /// The capacity of a node.
     static constexpr uint32_t kCapacity = (PageSize-sizeof(Node))/(sizeof(KeyT)+sizeof(Swip))-1;
