@@ -1,9 +1,11 @@
-#include "btree/btree.h"
 #include <cstdint>
 #include <iostream>
+#include <random>
+#include <algorithm>
+#include <chrono>
+#include "btree/btree.h"
 
-using BTree = guidedresearch::BTree<uint64_t, uint64_t, std::less<uint64_t>, 1024, guidedresearch::NodeLayout::EYTZINGER>;
-using Swip = guidedresearch::Swip;
+using BufferManager = guidedresearch::BufferManager;
 
 uint64_t rdtsc() {
   unsigned int lo, hi;
@@ -11,29 +13,44 @@ uint64_t rdtsc() {
   return ((uint64_t)hi << 32) | lo;
 }
 
-int main() {
-    std::vector<std::byte> buffer;
-    buffer.resize(1024);
+template<typename T>
+uint64_t bench() {
+    BufferManager buffer_manager(1024, 100000);
+    T tree(0, buffer_manager);
+    auto n = 10000 * T::LeafNode::kCapacity;
 
-    auto n = BTree::InnerNode::kCapacity;
+    // Generate random non-repeating key sequence
+    std::vector<uint64_t> keys(n);
+    std::iota(keys.begin(), keys.end(), n);
+    std::mt19937_64 engine(0);
+    std::shuffle(keys.begin(), keys.end(), engine);
 
-    auto start = rdtsc();
-
-    int iters = 100;
-
-    for (int i=0; i<iters; ++i) {
-        // init inner node
-        auto node = new (buffer.data()) BTree::InnerNode();
-        node->children[0] = Swip::fromPID(0);
-        node->count = 1;
-        // Insert children into the leaf nodes
-        for (uint32_t i = n, j = n*2; i > 0; --i, j = i * 2) {
-            Swip s = Swip::fromPID(j);
-            node->insert_split(i, s);
-        }
+    // Insert values
+    for (auto i = 0ul; i < n; ++i) {
+        tree.insert(keys[i], 2 * keys[i]);
     }
 
-    auto end = rdtsc();
+    const auto start {std::chrono::steady_clock::now()};
+    auto m = n*10u;
+    // Lookup all values
+    for (auto i = 0ul; i < m; ++i) {
+        auto v = tree.lookup(keys[i % n]);
+    }
+    const auto end {std::chrono::steady_clock::now()};
+    auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(end-start);
+    return duration.count()/m;
+}
 
-    std::cout << "Cycles per insertion: " << (end-start)/(iters*n) << "\n";
+int main() {
+    {
+        using BTree = guidedresearch::BTree<uint64_t, uint64_t, std::less<uint64_t>, 1024, guidedresearch::NodeLayout::SORTED>;
+        auto cpl = bench<BTree>();
+        std::cout << "Standard BTree: " << cpl << "ns/lookup\n";
+    }
+    {
+        using BTree = guidedresearch::BTree<uint64_t, uint64_t, std::less<uint64_t>, 1024, guidedresearch::NodeLayout::EYTZINGER>;
+        auto cpl = bench<BTree>();
+        std::cout << "Eytzinger BTree: " << cpl << "ns/lookup\n";
+    }
+
 }

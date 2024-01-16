@@ -21,7 +21,7 @@ struct BTree : public Segment {
     using Node = guidedresearch::Node<KeyT, ValueT, ComparatorT, PageSize>;
     using InnerNode = guidedresearch::InnerNode<KeyT, ValueT, ComparatorT, PageSize, layout>;
     // using leaf node designed for fast insertions
-    using LeafNode = guidedresearch::LeafNode<KeyT, ValueT, ComparatorT, PageSize, true>;
+    using LeafNode = guidedresearch::LeafNode<KeyT, ValueT, ComparatorT, PageSize, false>;
 
     /// The root.
     Swip root;
