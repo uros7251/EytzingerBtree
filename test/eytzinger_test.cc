@@ -5,7 +5,9 @@
 
 using BufferFrame = guidedresearch::BufferFrame;
 using BufferManager = guidedresearch::BufferManager;
-using BTree = guidedresearch::BTree<uint64_t, uint64_t, std::less<uint64_t>, 1024, guidedresearch::NodeLayout::EYTZINGER>;
+using KeyT = uint64_t;
+using ValueT = uint64_t;
+using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, 1024, guidedresearch::NodeLayout::EYTZINGER>;
 using Swip = guidedresearch::Swip;
 
 namespace {
@@ -217,7 +219,7 @@ TEST(EytzingerTest, InnerNodeSplit) {
     // Now split the left node
     auto separator = left_node->split(buffer_right.data());
     ASSERT_EQ(left_node->count, n / 2 + 1);
-    ASSERT_EQ(right_node->count, n / 2);
+    ASSERT_EQ(right_node->count, (n + 1) / 2);
     ASSERT_EQ(separator, n / 2 + 1);
 
     // Check keys & children of the left node
@@ -258,7 +260,7 @@ TEST(EytzingerTest, InnerNodeMerge) {
     left_node->count = 1;
     // init right node
     auto right_node = new (buffer_right.data()) BTree::InnerNode();
-    right_node->children[0] = Swip::fromPID(n);
+    right_node->children[0] = Swip::fromPID(n & (~0x1));
     right_node->count = 1;
 
     // insert into left node
@@ -269,7 +271,7 @@ TEST(EytzingerTest, InnerNodeMerge) {
     uint64_t separator = n/2;
     // insert into right node
     for (uint32_t i = 1, j = 2; i < n/2; ++i, j = i * 2) {
-        right_node->insert_split(n/2 + i, n + j);
+        right_node->insert_split(n/2 + i, (n & (~0x1)) + j);
     }
     ASSERT_EQ(right_node->count, n/2);
     // merge
@@ -302,7 +304,7 @@ TEST(EytzingerTest, InnerNodeRebalance) {
     }
     ASSERT_EQ(left_node->count, n);
     // init separator
-    uint64_t separator = n;
+    KeyT separator = n;
     // init right node
     auto right_node = new (buffer_right.data()) BTree::InnerNode();
     right_node->children[0] = Swip::fromPID(2*n);
@@ -356,14 +358,14 @@ TEST(EytzingerTest, InnerNodeRebalanceRightToLeft) {
     }
     ASSERT_EQ(left_node->count, n/2);
     // init separator
-    uint64_t separator = n/2;
+    KeyT separator = n/2;
     // init right node
     auto right_node = new (buffer_right.data()) BTree::InnerNode();
-    right_node->children[0] = Swip::fromPID(n);
+    right_node->children[0] = Swip::fromPID(n & (~0x1));
     right_node->count = 1;
     // insert into right node
     for (uint32_t i = 1, j = 2; i < n; ++i, j = i * 2) {
-        right_node->insert_split(n/2 + i, n + j);
+        right_node->insert_split(n/2 + i, (n & (~0x1)) + j);
     }
     ASSERT_EQ(right_node->count, n);
     // rebalance

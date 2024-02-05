@@ -13,7 +13,9 @@
 using BufferFrame = guidedresearch::BufferFrame;
 using BufferManager = guidedresearch::BufferManager;
 using Defer = guidedresearch::Defer;
-using BTree = guidedresearch::BTree<uint64_t, uint64_t, std::less<uint64_t>, 1024, guidedresearch::NodeLayout::EYTZINGER>;
+using KeyT = uint64_t;
+using ValueT = uint64_t;
+using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, 1024, guidedresearch::NodeLayout::EYTZINGER>;
 
 namespace {
 
@@ -23,7 +25,7 @@ TEST(BTreeTest, Capacity) {
    ASSERT_NE(BTree::InnerNode::kCapacity, 42);
    ASSERT_NE(BTree::LeafNode::kCapacity, 42);
 
-   ASSERT_LE(1000, sizeof(BTree::InnerNode));
+   ASSERT_LE(960, sizeof(BTree::InnerNode));
    ASSERT_LE(sizeof(BTree::InnerNode), 1024);
    
    ASSERT_LE(1000, sizeof(BTree::LeafNode));

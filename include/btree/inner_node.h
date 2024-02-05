@@ -205,16 +205,23 @@ private:
 template<typename KeyT, typename ValueT, typename ComparatorT, size_t PageSize>
 struct InnerNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::EYTZINGER> : public Node<KeyT, ValueT, ComparatorT, PageSize> {
     using Node = guidedresearch::Node<KeyT, ValueT, ComparatorT, PageSize>;
+    static_assert(PageSize % 64 == 0); // PageSize should be multiple of cacheline size
 
+    /// @brief Iterator for in-order traversal of the keys
     struct Iterator {
+        /// @brief The current index
         uint32_t k;
+        /// @brief The node count
         uint16_t n;
 
         Iterator() = delete;
         Iterator(uint32_t k, uint16_t size) :k(k), n(size) {}
 
         bool operator==(const Iterator &other) const = default;
+
         uint32_t operator*() { return k; }
+
+        /// @brief Advance the iterator to the next key in in-order traversal
         Iterator& operator++() {
             if (2*k+1<n) {
                 // go right
@@ -228,6 +235,7 @@ struct InnerNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::EYTZINGER> : p
             return *this;
         }
 
+        /// @brief Advance the iterator to the previous key in in-order traversal
         Iterator& operator--() {
             if (2*k<n) {
                 // go left
@@ -241,22 +249,40 @@ struct InnerNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::EYTZINGER> : p
             return *this;
         }
 
+        /// @brief Create an iterator pointing to the first key in in-order traversal
+        /// @param size The node count
+        /// @return Iterator pointing to the first key in in-order traversal
         static Iterator begin(uint16_t size) { assert(size); return Iterator((1u << (32 - std::countl_zero(size-1u))) >> 1, size); } // greatest power of 2 less than n
-        static Iterator end(uint16_t size)  { return Iterator(0u, size); }
+        
+        /// @brief Create an iterator pointing to the last key in reverse in-order traversal
+        /// @param size The node count
+        /// @return Iterator pointing to the last key in in-order traversal
         static Iterator rbegin(uint16_t size) { return Iterator(((1u << (16 - std::countl_zero(size))) >> 1) - 1u, size); } // (greatest power of 2 not bigger than n) - 1
+
+        static Iterator end(uint16_t size)  { return Iterator(0u, size); }
         static Iterator rend(uint16_t size)  { return Iterator(0u, size); }
     };
     
+    static constexpr uint32_t GetKeysOffset() {
+        auto block_offset = (PageSize+sizeof(KeyT))/(64+8*sizeof(KeyT));
+        if (8*block_offset-1 < (PageSize-64*(block_offset+1))/sizeof(KeyT)) ++block_offset;
+        return block_offset*64;
+    }
+    static constexpr uint32_t GetKCapacity() {
+        auto block_offset = (PageSize+sizeof(KeyT))/(64+8*sizeof(KeyT));
+        return std::max(8*block_offset-1, (PageSize-64*(block_offset+1))/sizeof(KeyT))-1;
+    }
+
     /// The capacity of a node.
-    static constexpr uint32_t kCapacity = (PageSize-sizeof(Node))/(sizeof(KeyT)+sizeof(Swip))-1;
+    static constexpr uint32_t kCapacity = GetKCapacity();
 
     inline static constexpr uint32_t max_keys() { return kCapacity; }
     inline static constexpr uint32_t max_children() { return kCapacity+1; }
 
-    /// The keys. Stored beginning with index 1.
-    KeyT keys[InnerNode::max_keys()+1]; // we leave first empty 
     /// The children. Child associated with the key at index i is stored at position i. The remaining child is stored at the 0th position.
     Swip children[InnerNode::max_children()]; 
+    /// The keys. Stored starting at index 1. Aligned to cache line size (64 bytes)
+    alignas(64) KeyT keys[(PageSize-GetKeysOffset())/sizeof(KeyT)]; // we leave first empty 
 
     /// Constructor.
     InnerNode() : Node(0, 0) { }
@@ -278,7 +304,7 @@ struct InnerNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::EYTZINGER> : p
         ComparatorT less;
         uint32_t i=1;
         while (i < Node::count) {
-            __builtin_prefetch(&keys[2*i]);
+            __builtin_prefetch(&keys[16*i]);
             i = 2*i + less(keys[i], key);
         }
 
