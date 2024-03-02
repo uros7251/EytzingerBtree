@@ -23,7 +23,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, false> : public guidedresea
     /// The values.
     ValueT values[LeafNode::max_values()]; // adjust this
     /// Constructor.
-    LeafNode() : Node(0, 0) { assert(reinterpret_cast<size_t>(&keys[0])==reinterpret_cast<size_t>(this)+Node::keys_offset); }
+    LeafNode() : Node(0, 0) { }
     LeafNode(const LeafNode &other) : Node(other) {
         copy();
     }
@@ -38,12 +38,34 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, false> : public guidedresea
     /// @return 
     bool merge_needed() const { return Node::count < max_values()/2; } 
 
+    /// Get the index of the first key that is not less than than a provided key.
+    /// @param[in] key          The key that should be inserted.
+    /// @return                 The index of the first key that is not less than the provided key and boolean indicating if the key is equal.
+    std::pair<uint32_t, bool> lower_bound(const KeyT &key) {
+        if (Node::count==0) return {0u, false}; // no keys
+        
+        ComparatorT less;
+        uint32_t i=0, n = Node::count;
+        // branchless binary search
+        while (n>1) {
+            auto half = n/2;
+            n -= half; // ceil(n/2)
+            // __builtin_prefetch(&keys[i+n/2-1]); // prefetch left
+            // __builtin_prefetch(&keys[i+half+n/2-1]); // prefetch right
+            i += less(keys[i+half-1], key) * half; // hopefully compiler translates this to cmov
+        }
+
+        return (i==Node::count-1u && less(keys[i], key)) ? // check if last key is less than key
+            std::make_pair(i+1, false) : // return index one after last key
+            std::make_pair(i, keys[i] == key); 
+    }
+
     /// Insert a key.
     /// @param[in] key          The key that should be inserted.
     /// @param[in] value        The value that should be inserted.
     void insert(const KeyT &key, const ValueT &value) {
         if (Node::count == kCapacity) throw std::runtime_error("Not enough space!");
-        auto [index, found] = Node::lower_bound(key);
+        auto [index, found] = lower_bound(key);
         if (!found && index < Node::count) { // if key should be inserted in the end, no need to move
             for (auto i=Node::count; i>index; --i) {
                 keys[i] = keys[i-1];
@@ -58,7 +80,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, false> : public guidedresea
     /// Erase a key.
     bool erase(const KeyT &key) {
         // try to find key
-        auto [index, found] = Node::lower_bound(key);
+        auto [index, found] = lower_bound(key);
         if (!found) return false; // key not found
         for (auto i=index; i<Node::count-1u; ++i) {
             keys[i] = keys[i+1];
@@ -196,8 +218,8 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, true> : public guidedresear
         while (n>1) {
             auto half = n/2;
             n -= half; // ceil(n/2)
-            __builtin_prefetch(&indices[i+n/2-1]); // prefetch left
-            __builtin_prefetch(&indices[i+half+n/2-1]); // prefetch right
+            // __builtin_prefetch(&indices[i+n/2-1]); // prefetch left
+            // __builtin_prefetch(&indices[i+half+n/2-1]); // prefetch right
             i += less(keys[indices[i+half-1]], key) * half; // hopefully compiler translates this to cmov
         }
 

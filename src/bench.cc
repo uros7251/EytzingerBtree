@@ -14,7 +14,7 @@ uint64_t rdtsc() {
 }
 
 template<typename T>
-uint64_t bench() {
+std::pair<uint64_t,uint64_t> bench() {
     BufferManager buffer_manager(1024, 100000);
     T tree(0, buffer_manager);
     auto n = 10000 * T::LeafNode::kCapacity;
@@ -22,35 +22,42 @@ uint64_t bench() {
     // Generate random non-repeating key sequence
     std::vector<uint64_t> keys(n);
     std::iota(keys.begin(), keys.end(), n);
-    std::mt19937_64 engine(0);
+    std::mt19937_64 engine(10);
     std::shuffle(keys.begin(), keys.end(), engine);
 
+    auto start {rdtsc()};
     // Insert values
     for (auto i = 0ul; i < n; ++i) {
         tree.insert(keys[i], 2 * keys[i]);
     }
+    auto end {rdtsc()};
+    auto duration = end-start;
+    auto insert_time = duration/n;
 
-    const auto start {std::chrono::steady_clock::now()};
-    auto m = n*10u;
     // Lookup all values
+    uint64_t checksum = 0ul;
+    auto m = n*10u;
+    start = rdtsc();
     for (auto i = 0ul; i < m; ++i) {
-        auto v = tree.lookup(keys[i % n]);
+        checksum ^= *tree.lookup(keys[i % n]);
     }
-    const auto end {std::chrono::steady_clock::now()};
-    auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(end-start);
-    return duration.count()/m;
+    end = rdtsc();
+    duration = end-start;
+    return {insert_time, duration/m};
 }
 
 int main() {
     {
         using BTree = guidedresearch::BTree<uint64_t, uint64_t, std::less<uint64_t>, 1024, guidedresearch::NodeLayout::SORTED>;
         auto cpl = bench<BTree>();
-        std::cout << "Standard BTree: " << cpl << "ns/lookup\n";
+        std::cout << "Standard BTree:\n"
+            << cpl.first << "cyc/insert, " << cpl.second << "cyc/lookup\n";
     }
     {
         using BTree = guidedresearch::BTree<uint64_t, uint64_t, std::less<uint64_t>, 1024, guidedresearch::NodeLayout::EYTZINGER>;
         auto cpl = bench<BTree>();
-        std::cout << "Eytzinger BTree: " << cpl << "ns/lookup\n";
+        std::cout << "Eytzinger BTree:\n"
+            << cpl.first << "cyc/insert, " << cpl.second << "cyc/lookup\n";
     }
 
 }

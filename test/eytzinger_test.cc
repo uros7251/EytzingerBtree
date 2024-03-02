@@ -12,8 +12,34 @@ using Swip = guidedresearch::Swip;
 
 namespace {
 
+TEST(EytzingerTest, BlockIterator) {
+    using Iterator = BTree::InnerNode::BlockIterator;
+    auto it = Iterator::begin(20);
+    ASSERT_EQ(*it, 8);
+    std::vector<uint32_t> expected = {8,9,10,11,12,13,14,15,1,16,17,18,19,2,3,4,5,6,7};
+    for (auto i = 0u; i < expected.size(); ++i) {
+        ASSERT_EQ(*it, expected[i]);
+        ++it;
+    }
+    ASSERT_TRUE(it == Iterator::end(20));
+
+    it = Iterator::rbegin(20);
+    ASSERT_EQ(*it, 7);
+    for (auto i = expected.size(); i > 0;) {
+        ASSERT_EQ(*it, expected[--i]);
+        --it;
+    }
+    ASSERT_TRUE(it == Iterator::rend(20));
+
+    it = Iterator::begin(1);
+    ASSERT_TRUE(it == Iterator::end(1));
+
+    it = Iterator::rbegin(1);
+    ASSERT_TRUE(it == Iterator::rend(1));
+}
+
 TEST(EytzingerTest, InOrderIterator) {
-    using Iterator = BTree::InnerNode::Iterator;
+    using Iterator = BTree::InnerNode::EytzingerIterator;
     auto it = Iterator::begin(12);
     ASSERT_EQ(*it, 8);
     std::vector<uint32_t> expected = {8, 4, 9, 2, 10, 5, 11, 1, 6, 3, 7};

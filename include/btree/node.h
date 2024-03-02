@@ -36,8 +36,8 @@ struct Node {
         while (n>1) {
             auto half = n/2;
             n -= half; // ceil(n/2)
-            __builtin_prefetch(&keys[i+n/2-1]); // prefetch left
-            __builtin_prefetch(&keys[i+half+n/2-1]); // prefetch right
+            // __builtin_prefetch(&keys[i+n/2-1]); // prefetch left
+            // __builtin_prefetch(&keys[i+half+n/2-1]); // prefetch right
             i += less(keys[i+half-1], key) * half; // hopefully compiler translates this to cmov
         }
 

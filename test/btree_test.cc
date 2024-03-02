@@ -271,9 +271,34 @@ TEST(BTreeTest, LookupSingleSplit) {
         tree.insert(i, 2 * i);
     }
 
+    {
+        tree.insert(BTree::LeafNode::kCapacity, 2 * BTree::LeafNode::kCapacity);
+        auto i = BTree::LeafNode::kCapacity;
+        ASSERT_TRUE(tree.lookup(i))
+            << "searching for the just inserted key k=" << BTree::LeafNode::kCapacity << " yields nothing";
+    }
+    // Lookup all values
+    for (auto i = 0ul; i < BTree::LeafNode::kCapacity + 1; ++i) {
+        auto v = tree.lookup(i);
+        ASSERT_TRUE(v)
+            << "key=" << i << " is missing";
+        ASSERT_EQ(*v, 2* i)
+            << "key=" << i << " should have the value v=" << 2*i;
+    }
+}
+
+TEST(BTreeTest, LookupSingleSplit2) {
+    BufferManager buffer_manager(1024, 100);
+    BTree tree(0, buffer_manager);
+
+    // Insert values
+    for (auto i = 0ul; i < BTree::LeafNode::kCapacity; ++i) {
+        tree.insert(i, 2 * i);
+    }
+
     tree.insert(BTree::LeafNode::kCapacity, 2 * BTree::LeafNode::kCapacity);
     ASSERT_TRUE(tree.lookup(BTree::LeafNode::kCapacity))
-        << "searching for the just inserted key k=" << (BTree::LeafNode::kCapacity + 1) << " yields nothing";
+        << "searching for the just inserted key k=" << BTree::LeafNode::kCapacity << " yields nothing";
 
     // Lookup all values
     for (auto i = 0ul; i < BTree::LeafNode::kCapacity + 1; ++i) {
@@ -317,7 +342,6 @@ TEST(BTreeTest, LookupMultipleSplitsDecreasing) {
     // Insert values
     for (auto i = n; i > 0; --i) {
         tree.insert(i, 2 * i);
-        //std::cout << i << " ";
         ASSERT_TRUE(tree.lookup(i))
             << "searching for the just inserted key k=" << i << " yields nothing";
     }

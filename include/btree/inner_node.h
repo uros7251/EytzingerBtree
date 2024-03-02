@@ -4,6 +4,7 @@
 #include <bit>
 #include <buffer_manager/swip.h>
 #include <btree/node.h>
+#include <immintrin.h>
 
 namespace guidedresearch {
 
@@ -53,7 +54,7 @@ struct InnerNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED> : publ
     Swip children[InnerNode::max_children()]; 
 
     /// Constructor.
-    InnerNode() : Node(0, 0) { assert(reinterpret_cast<size_t>(&keys[0])==reinterpret_cast<size_t>(this)+Node::keys_offset); }
+    InnerNode() : Node(0, 0) { }
     InnerNode(uint16_t level) : Node(level, 0) {}
     InnerNode(const InnerNode &other) : Node(other) {
         copy();
@@ -69,6 +70,28 @@ struct InnerNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED> : publ
     /// @return 
     bool merge_needed() const { return Node::count < max_children()/2; } 
 
+    /// Get the index of the first key that is not less than than a provided key.
+    /// @param[in] key          The key that should be inserted.
+    /// @return                 The index of the first key that is not less than the provided key and boolean indicating if the key is equal.
+    std::pair<uint32_t, bool> lower_bound(const KeyT &key) {
+        if (Node::count <= 1) return {0u, false}; // no keys
+        
+        ComparatorT less;
+        uint32_t i=0, n = Node::count-1u;
+        // branchless binary search
+        while (n>1) {
+            auto half = n/2;
+            n -= half; // ceil(n/2)
+            // __builtin_prefetch(&keys[i+n/2-1]); // prefetch left
+            // __builtin_prefetch(&keys[i+half+n/2-1]); // prefetch right
+            i += less(keys[i+half-1], key) * half; // hopefully compiler translates this to cmov
+        }
+
+        return (i==Node::count-2u && less(keys[i], key)) ? // check if last key is less than key
+            std::make_pair(i+1, false) : // return index one after last key
+            std::make_pair(i, keys[i] == key); 
+    }
+
     /// Insert a key.
     /// @param[in] key          The key that should be inserted.
     /// @param[in] child        The child that should be inserted.
@@ -78,7 +101,7 @@ struct InnerNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED> : publ
         // AFTER: keys = [1, 3, 4, 9], children = [8, 3, 40, 13, 7], count = 5
 
         assert(Node::count-1 != InnerNode::kCapacity);
-        auto [index, _] = Node::lower_bound(key); // find index to insert key
+        auto [index, _] = lower_bound(key); // find index to insert key
         for (uint32_t i=Node::count-1; i>index; --i) {
             keys[i] = keys[i-1];
             children[i+1] = children[i];
@@ -120,7 +143,7 @@ struct InnerNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED> : publ
         // new_node gets floor(count/2)-1 keys
         // move keys starting from index floor((count-1)/2)+1=floor((count+1)/2)=ceil(count/2) (skip separator), in total ceil((count-1)/2)-1=floor(count/2)-1
         // move children starting from index ceil(count/2), in total floor(count/2)
-        for (auto i=0u, pos=(Node::count+1)/2; i<Node::count/2-1u; ++i) {
+        for (unsigned i=0u, pos=(Node::count+1)/2; i<Node::count/2-1u; ++i) {
             new_node->keys[i] = keys[i+pos];
             new_node->children[i] = children[i+pos];
         }
@@ -207,22 +230,110 @@ struct InnerNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::EYTZINGER> : p
     using Node = guidedresearch::Node<KeyT, ValueT, ComparatorT, PageSize>;
     static_assert(PageSize % 64 == 0); // PageSize should be multiple of cacheline size
 
+    struct BlockIterator {
+        static constexpr uint16_t CACHE_LINE=64;
+        /// @brief The block (cacheline) size in units of keys
+        static constexpr uint16_t B = CACHE_LINE/sizeof(KeyT);
+        /// @brief The current block index
+        uint16_t i;
+        /// @brief The current index within the block
+        uint16_t j;
+        /// @brief The node count
+        uint16_t n;
+
+        BlockIterator() = delete;
+        BlockIterator(uint32_t i, uint16_t size) :i(i/B), j(i%B), n(size) {}
+
+        bool operator==(const BlockIterator &other) const = default;
+
+        uint32_t operator*() { return i*B+j; }
+
+        /// @brief Calculates the index of the child block of entry (i,j)
+        /// @return Returns the index of the child block of entry (i,j)
+        uint16_t child() { return i*(B+1)+j; } 
+        /// @brief Calculates the entry (u,v) such that its child block is i
+        /// @return Returns the entry (u,v) such that its child block is i
+        std::pair<uint16_t, uint16_t> parent() { return {i/(B+1), i%(B+1)}; }
+
+        /// @brief Advance the iterator to the next key in in-order traversal
+        BlockIterator& operator++() {
+            if (B*(1+child()) < n) {
+                // go to right child
+                i=child()+1;
+                j=0;
+                while (B*child() < n) i=child();
+                return *this;
+            }
+            ++j; // increment j
+            while (j>=B || i*B+j>=n) {
+                // climb up until you're not rightmost child and you're within bounds
+                std::tie(i,j) = parent();
+            }
+            return *this;
+        }
+
+        /// @brief Advance the iterator to the next key in in-order traversal
+        BlockIterator& operator--() {
+            if (B*child() < n) {
+                // go to left child
+                i=child();
+                j=B; // go to the rightmost entry
+                // go right until either rightmost entry is out of bounds or 
+                while (**this < n && B*child() < n) i=child();
+                j=std::min(j, static_cast<uint16_t>(n-i*B))-1; // if rightmost entry was out of bounds, min will return the second argument
+                return *this;
+            }
+            if (j>0) {
+                // go left
+                --j;
+                return *this;
+            }
+            while (j==0 && i!=0) {
+                // climb up until you're not leftmost child or you're at root block
+                std::tie(i,j) = parent();
+            }
+            if (j) --j;
+            return *this;
+        }
+
+        /// @brief Create an iterator pointing to the first key in in-order traversal
+        /// @param size The node count
+        /// @return Iterator pointing to the first key in in-order traversal
+        static BlockIterator begin(uint16_t size) { assert(size); return ++BlockIterator(0u, size); }
+        
+        /// @brief Create an iterator pointing to the last key in reverse in-order traversal
+        /// @param size The node count
+        /// @return Iterator pointing to the last key in in-order traversal
+        static BlockIterator rbegin(uint16_t size) {
+            if (B >= size) return BlockIterator(size-1, size);
+            uint16_t i=0;
+            while(true) {
+                if ((i+1)*B >= size) return BlockIterator(size-1, size);
+                else if (((i+1)*B+i)*B >= size) return BlockIterator((i+1)*B-1, size);
+                i = (i+1)*B+i; // = i*(B+1)+B
+            }
+        }
+
+        static BlockIterator end(uint16_t size)  { return BlockIterator(0u, size); }
+        static BlockIterator rend(uint16_t size)  { return BlockIterator(0u, size); }
+    };
+
     /// @brief Iterator for in-order traversal of the keys
-    struct Iterator {
+    struct EytzingerIterator {
         /// @brief The current index
         uint32_t k;
         /// @brief The node count
         uint16_t n;
 
-        Iterator() = delete;
-        Iterator(uint32_t k, uint16_t size) :k(k), n(size) {}
+        EytzingerIterator() = delete;
+        EytzingerIterator(uint32_t k, uint16_t size) :k(k), n(size) {}
 
-        bool operator==(const Iterator &other) const = default;
+        bool operator==(const EytzingerIterator &other) const = default;
 
         uint32_t operator*() { return k; }
 
         /// @brief Advance the iterator to the next key in in-order traversal
-        Iterator& operator++() {
+        EytzingerIterator& operator++() {
             if (2*k+1<n) {
                 // go right
                 k = 2*k+1;
@@ -230,13 +341,13 @@ struct InnerNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::EYTZINGER> : p
                 while (2*k<n) k = 2*k;
             }
             else {
-                k = k >> (std::countr_one(k)+1); // climb up until you're the right child and then climb up one more time
+                k = k >> (std::countr_one(k)+1); // climb up until you're the left child and then climb up one more time
             }
             return *this;
         }
 
         /// @brief Advance the iterator to the previous key in in-order traversal
-        Iterator& operator--() {
+        EytzingerIterator& operator--() {
             if (2*k<n) {
                 // go left
                 k = 2*k;
@@ -244,7 +355,7 @@ struct InnerNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::EYTZINGER> : p
                 while (2*k+1<n) k = 2*k+1;
             }
             else {
-                k = k >> (std::countr_zero(k)+1); // climb up until you're the left child and then climb up one more time
+                k = k >> (std::countr_zero(k)+1); // climb up until you're the right child and then climb up one more time
             }
             return *this;
         }
@@ -252,18 +363,21 @@ struct InnerNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::EYTZINGER> : p
         /// @brief Create an iterator pointing to the first key in in-order traversal
         /// @param size The node count
         /// @return Iterator pointing to the first key in in-order traversal
-        static Iterator begin(uint16_t size) { assert(size); return Iterator((1u << (32 - std::countl_zero(size-1u))) >> 1, size); } // greatest power of 2 less than n
+        static EytzingerIterator begin(uint16_t size) { assert(size); return EytzingerIterator((1u << (32 - std::countl_zero(size-1u))) >> 1, size); } // greatest power of 2 less than n
         
         /// @brief Create an iterator pointing to the last key in reverse in-order traversal
         /// @param size The node count
         /// @return Iterator pointing to the last key in in-order traversal
-        static Iterator rbegin(uint16_t size) { return Iterator(((1u << (16 - std::countl_zero(size))) >> 1) - 1u, size); } // (greatest power of 2 not bigger than n) - 1
+        static EytzingerIterator rbegin(uint16_t size) { return EytzingerIterator(((1u << (16 - std::countl_zero(size))) >> 1) - 1u, size); } // (greatest power of 2 not bigger than n) - 1
 
-        static Iterator end(uint16_t size)  { return Iterator(0u, size); }
-        static Iterator rend(uint16_t size)  { return Iterator(0u, size); }
+        static EytzingerIterator end(uint16_t size)  { return EytzingerIterator(0u, size); }
+        static EytzingerIterator rend(uint16_t size)  { return EytzingerIterator(0u, size); }
     };
     
+    using Iterator = BlockIterator;
+
     static constexpr uint32_t GetKeysOffset() {
+        // keys array has to be aligned on cacheline ie. 64B
         auto block_offset = (PageSize+sizeof(KeyT))/(64+8*sizeof(KeyT));
         if (8*block_offset-1 < (PageSize-64*(block_offset+1))/sizeof(KeyT)) ++block_offset;
         return block_offset*64;
@@ -285,8 +399,8 @@ struct InnerNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::EYTZINGER> : p
     alignas(64) KeyT keys[(PageSize-GetKeysOffset())/sizeof(KeyT)]; // we leave first empty 
 
     /// Constructor.
-    InnerNode() : Node(0, 0) { }
-    InnerNode(uint16_t level) : Node(level, 0) {}
+    InnerNode() : Node(0, 0) { init(); }
+    InnerNode(uint16_t level) : Node(level, 0) { init(); }
     InnerNode(const InnerNode &other) = default;
 
     InnerNode& operator=(const InnerNode& other) = default;
@@ -301,18 +415,26 @@ struct InnerNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::EYTZINGER> : p
 
         if (Node::count <= 1) return {0u, false}; // no keys
         
-        ComparatorT less;
-        uint32_t i=1;
-        while (i < Node::count) {
-            __builtin_prefetch(&keys[16*i]);
-            i = 2*i + less(keys[i], key);
+        __m512i key_vec = _mm512_set1_epi64(key);
+        constexpr auto B = Iterator::B; // block size
+        uint32_t N = (Node::count+B-1u)/B; // block_count = ceil(count/B)
+        //ComparatorT less;
+        // save last not-less
+        auto k=0u;
+        for (uint32_t i=0, j=1, mask=1; i < N; i+=i*B+j, j=0, mask=0) {
+            // comparison (for now iteration, later using SIMD)
+            mask |= cmp(keys[i*B], key_vec);
+            // for (; j<B; ++j) {
+            //     mask |= (less(keys[i*B+j], key) << j);
+            // }
+            j = std::countr_one(mask);
+            if (j < B && i*B+j<Node::count) {
+                k = i*B+j;
+            }
         }
 
-        // recover index
-        i >>= std::countr_one(i)+1;
-
-        return i ? // check if last key is less than key
-            std::make_pair(i, keys[i] == key) :
+        return k ? // check if last key is less than key
+            std::make_pair(k, keys[k] == key) :
             std::make_pair(0u, false); 
     }
 
@@ -425,6 +547,7 @@ struct InnerNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::EYTZINGER> : p
             }
         }
         --Node::count;
+        if (Node::count) keys[Node::count] = std::numeric_limits<KeyT>::max();
     }
 
     /// Split the node.
@@ -443,10 +566,12 @@ struct InnerNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::EYTZINGER> : p
         for (auto i=0; i<right_node_count-1; ++i, --old_it, --right_it) {
             new_node->keys[*right_it] = keys[*old_it];
             new_node->children[*right_it] = children[*old_it];
+            keys[*old_it] = std::numeric_limits<KeyT>::max();
         }
         assert(right_it == Iterator::rend(right_node_count));
         
         auto separator = keys[*old_it];
+        keys[*old_it] = std::numeric_limits<KeyT>::max();
         auto separator_swip = children[*old_it];
         --old_it;
         for (auto i=0; i<left_node_count-1; ++i, --old_it, --left_it) {
@@ -555,6 +680,9 @@ struct InnerNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::EYTZINGER> : p
                 left.keys[*new_left_it] = left.keys[*old_left_it];
                 left.children[*new_left_it] = left.children[*old_left_it];
             }
+            for (unsigned i=left.count-to_shift; i<sizeof(left.keys)/sizeof(KeyT); ++i) {
+                left.keys[i] = std::numeric_limits<KeyT>::max();
+            }
             assert(old_left_it == Iterator::rend(left.count));
             assert(new_left_it == Iterator::rend(left.count-to_shift));
             // update counts
@@ -591,12 +719,29 @@ struct InnerNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::EYTZINGER> : p
                 right.keys[*new_right_it] = right.keys[*old_right_it];
                 right.children[*new_right_it] = right.children[*old_right_it];
             }
+            for (unsigned i=right.count-to_shift; i<sizeof(right.keys)/sizeof(KeyT); ++i) {
+                right.keys[i] = std::numeric_limits<KeyT>::max();
+            }
             assert(old_right_it == Iterator::end(right.count));
             assert(new_right_it == Iterator::end(right.count-to_shift));
             // update counts
             left.count += to_shift;
             right.count -= to_shift;
         }
+    }
+
+    private:
+    void init() {
+        assert((sizeof(keys)/sizeof(KeyT))%8==0);
+        keys[0] = std::numeric_limits<KeyT>::min();
+        for (auto i=1u; i<sizeof(keys)/sizeof(KeyT); ++i) {
+            keys[i] = std::numeric_limits<KeyT>::max();
+        }
+    }
+
+    static unsigned cmp(KeyT &y, __m512i &x) {
+        __m512i y_vec = _mm512_load_si512(&y);
+        return _mm512_cmplt_epu64_mask(y_vec, x);
     }
 };
 }

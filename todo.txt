@@ -1,4 +1,5 @@
 altan's notes:
+ - focus on eytzinger n-ary layout 
 
 implemented:
  - hot path inlined
@@ -11,7 +12,22 @@ implemented:
 left to be implemented:
  - optimistic lock coupling
  - n-ary eytzinger
- - leverage simd
+ - leverage simd (requires allignment)
+
+challanges:
+ - different key types (different allignment, comparison logic, etc.)
+ - idea for strings: store the first few bytes along with the pointer for faster comparison
 
 for later:
  - try to add next_node pointers to leaf nodes while taking into account buffer manager based on pointer swizzling
+
+questions for altan:
+ - take a look at results (why are they not better)
+ - c++ help, node operations are written in terms of iterators. the only thing that should be changed between
+different layouts is iterator implementation and lower_bound implementation. how to do that?
+
+
+gcc bug:
+ - inner_node.h:418 segmentation fault on _mm512_set1_epi64()
+ - details:doesn't happen only in release mode when i run all the tests (when i run just eytzinger tests, it appears again)
+store instruction is problematic. clang produces no bug.
