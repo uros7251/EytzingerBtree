@@ -43,7 +43,7 @@ void BufferManager::fix_page_slow(Swip& swip) {
          throw buffer_full_error();
       }
       auto &bf = frames.emplace_back(swip.asPageID());
-      bf.data.resize(page_size, 0);
+      bf.data.resize(page_size, page_size);
       swip.warm(&bf);
    }
 }

@@ -3,6 +3,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <stdlib.h>
 #include <exception>
 #include <unordered_map>
 #include <vector>
@@ -13,6 +15,20 @@
 
 namespace guidedresearch {
 
+class AlignedVector {
+   char* handle;
+   
+   public:
+   AlignedVector() :handle(nullptr) {}
+   AlignedVector(AlignedVector&& other) { *this = std::move(other); }
+   ~AlignedVector() { std::free(handle); }
+   
+   AlignedVector& operator=(AlignedVector&& other) { handle = other.handle; other.handle = nullptr; return *this; }
+
+   void resize(size_t size, size_t alignment = 0) { if (handle) std::free(handle); handle = static_cast<char*>(std::aligned_alloc(alignment, size)); std::memset(handle, 0, size); }
+   char* data() { return handle; }
+};
+
 class BufferFrame {
    private:
    friend class BufferManager;
@@ -22,7 +38,7 @@ class BufferFrame {
    bool exclusive = false;
    bool dirty = false;
 
-   std::vector<char> data;
+   AlignedVector data;
 
    public:
    /// Constructor.
@@ -31,6 +47,8 @@ class BufferFrame {
    BufferFrame(BufferFrame&& o) noexcept;
    // Assignment
    BufferFrame& operator=(BufferFrame&& o) noexcept;
+   // Destructor
+   ~BufferFrame() = default;
 
    /// Returns a pointer to this page's data.
    char* get_data() { return data.data(); }
