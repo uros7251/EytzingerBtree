@@ -13,6 +13,8 @@
 #include <mutex>
 #include "buffer_manager/swip.h"
 
+#define SINGLE_THREADED 1
+
 namespace guidedresearch {
 
 class AlignedVector {
@@ -25,7 +27,7 @@ class AlignedVector {
    
    AlignedVector& operator=(AlignedVector&& other) { handle = other.handle; other.handle = nullptr; return *this; }
 
-   void resize(size_t size, size_t alignment = 0) { if (handle) std::free(handle); handle = static_cast<char*>(std::aligned_alloc(alignment, size)); std::memset(handle, 0, size); }
+   void resize(size_t size, size_t alignment = 0) { if (!alignment) alignment=size; if (handle) std::free(handle); handle = static_cast<char*>(std::aligned_alloc(alignment, size)); std::memset(handle, 0, size); }
    char* data() { return handle; }
 };
 
@@ -34,9 +36,12 @@ class BufferFrame {
    friend class BufferManager;
 
    u64 pid;
-   std::shared_mutex latch;
    bool exclusive = false;
    bool dirty = false;
+
+   #ifndef SINGLE_THREADED
+   std::shared_mutex latch;
+   #endif
 
    AlignedVector data;
 
@@ -57,9 +62,12 @@ class BufferFrame {
 
 class BufferManager {
    private:
-   std::mutex bm_lock;
    size_t page_size, page_count;
    std::vector<BufferFrame> frames;
+
+   #ifndef SINGLE_THREADED
+   std::mutex bm_lock;
+   #endif
 
    // cold path
    void fix_page_slow(Swip& swip);
@@ -99,11 +107,15 @@ class BufferManager {
       }
       auto &bf = swip.asBufferFrame();
       if (exclusive) {
+         #ifndef SINGLE_THREADED
          bf.latch.lock();
+         #endif
          bf.exclusive = true;
       }
       else {
+         #ifndef SINGLE_THREADED
          bf.latch.lock_shared();
+         #endif
       }
       return bf;
    }

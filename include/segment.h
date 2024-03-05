@@ -26,10 +26,14 @@ class Segment {
    /// Pages to be reused
    std::forward_list<BufferFrame*> free_pages;
    /// Mutex for free_pages
+   #ifndef SINGLE_THREADED
    std::mutex free_pages_mutex;
+   #endif
 
    Swip allocate_page() {
+      #ifndef SINGLE_THREADED
       std::lock_guard lock(free_pages_mutex);
+      #endif
       if (free_pages.empty()) {
          Swip swip (buffer_manager.get_page_id(segment_id, used_pages_count++));
          return swip;
@@ -42,7 +46,9 @@ class Segment {
    }
 
    void deallocate_page(BufferFrame *page) {
+      #ifndef SINGLE_THREADED
       std::lock_guard lock(free_pages_mutex);
+      #endif
       free_pages.push_front(page);
    }
 };

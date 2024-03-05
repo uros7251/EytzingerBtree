@@ -36,7 +36,9 @@ BufferManager::~BufferManager() = default;
 
 void BufferManager::fix_page_slow(Swip& swip) {
    // cold access, take the global lock
+   #ifndef SINGLE_THREADED
    std::lock_guard<std::mutex> lock {bm_lock};
+   #endif
    // check again if the page was not swizzled in the meantime by another thread
    if (swip.isUNSWIZZLED()) {
       if (frames.size() >= page_count) {
@@ -53,10 +55,14 @@ void BufferManager::unfix_page(BufferFrame& page, bool is_dirty) {
    if (page.exclusive) {
       page.exclusive = false;
       page.dirty = is_dirty;
+      #ifndef SINGLE_THREADED
       page.latch.unlock();
+      #endif
    }
    else {
+      #ifndef SINGLE_THREADED
       page.latch.unlock_shared();
+      #endif
    }
 }
 
