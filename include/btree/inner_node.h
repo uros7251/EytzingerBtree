@@ -99,10 +99,10 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
 
             constexpr auto B = CACHELINE/sizeof(KeyT); // block size
             
-            #ifdef __AVX512F__
+            #if defined(__AVX512F__) && defined(__AVX512VL__)
             __m512i key_vec = _mm512_set1_epi64(target);
             #else
-            __m256i key_vec = _mm256_set1_epi64x(target);
+            ComparatorT less;
             #endif
 
             uint32_t N = (Node::count+B-1u)/B; // block_count = ceil(count/B)
@@ -111,17 +111,14 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
             auto k=0u;
             for (uint32_t i=0, j=1, mask=1; i < N; i+=i*B+j, j=0, mask=0) {
                 // comparison
-                #ifdef __AVX512F__
+                #if defined(__AVX512F__) && defined(__AVX512VL__)
                 __m512i y_vec = _mm512_load_si512(&keys[i*B]);
                 mask |= _mm512_cmplt_epu64_mask(y_vec, key_vec);
                 #else
-                __m256i y1_vec = _mm256_load_si256((__m256i*)&keys[i*B]);
-                __m256i y2_vec = _mm256_load_si256((__m256i*)&keys[i*B+B/2]);
-                mask |= _mm256_cmplt_epu64_mask(y1_vec, key_vec) + (_mm256_cmplt_epu64_mask(y2_vec, key_vec) << (B/2));
+                for (; j<B; ++j) {
+                    mask |= (less(keys[i*B+j], target) << j);
+                }
                 #endif
-                // for (; j<B; ++j) {
-                //     mask |= (less(keys[i*B+j], key) << j);
-                // }
                 j = std::countr_one(mask);
                 if (j < B) {
                     k = i*B+j;
