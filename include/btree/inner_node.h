@@ -37,7 +37,7 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
     static_assert(PageSize % CACHELINE == 0); // PageSize should be multiple of cacheline size
     
     using Node = guidedresearch::Node<KeyT, ValueT, ComparatorT, PageSize>;
-    using Iterator = decltype(IteratorPicker<layout, KeyT>())::type;
+    using Iterator = typename decltype(IteratorPicker<layout, KeyT>())::type;
 
     // NOTE: two functions below assume cacheline is 64B!
     static consteval uint32_t GetKeysOffset() {
