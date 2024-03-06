@@ -5,6 +5,7 @@
 
 using BufferFrame = guidedresearch::BufferFrame;
 using BufferManager = guidedresearch::BufferManager;
+using AlignedVector = guidedresearch::AlignedVector;
 using KeyT = uint64_t;
 using ValueT = uint64_t;
 using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, 1024, guidedresearch::NodeLayout::EYTZINGER>;
@@ -13,7 +14,7 @@ using Swip = guidedresearch::Swip;
 namespace {
 
 TEST(EytzingerTest, BlockIterator) {
-    using Iterator = BTree::InnerNode::BlockIterator;
+    using Iterator = guidedresearch::BlockIterator<64/sizeof(KeyT)>;
     auto it = Iterator::begin(20);
     ASSERT_EQ(*it, 8);
     std::vector<uint32_t> expected = {8,9,10,11,12,13,14,15,1,16,17,18,19,2,3,4,5,6,7};
@@ -39,7 +40,7 @@ TEST(EytzingerTest, BlockIterator) {
 }
 
 TEST(EytzingerTest, InOrderIterator) {
-    using Iterator = BTree::InnerNode::EytzingerIterator;
+    using Iterator = guidedresearch::EytzingerIterator;
     auto it = Iterator::begin(12);
     ASSERT_EQ(*it, 8);
     std::vector<uint32_t> expected = {8, 4, 9, 2, 10, 5, 11, 1, 6, 3, 7};
@@ -68,8 +69,8 @@ TEST(EytzingerTest, InOrderIterator) {
 }
 
 TEST(EytzingerTest, InnerNodeInsert) {
-    std::vector<std::byte> buffer;
-    buffer.resize(1024);
+    AlignedVector buffer;
+    buffer.resize(1024, 1024);
     // init inner node
     auto node = new (buffer.data()) BTree::InnerNode();
     node->children[0] = Swip::fromPID(0);
@@ -99,8 +100,8 @@ TEST(EytzingerTest, InnerNodeInsert) {
 }
 
 TEST(EytzingerTest, InnerNodeInsertDecreasing) {
-    std::vector<std::byte> buffer;
-    buffer.resize(1024);
+    AlignedVector buffer;
+    buffer.resize(1024, 1024);
     // init inner node
     auto node = new (buffer.data()) BTree::InnerNode();
     node->children[0] = Swip::fromPID(0);
@@ -130,8 +131,8 @@ TEST(EytzingerTest, InnerNodeInsertDecreasing) {
 }
 
 TEST(EytzingerTest, InnerNodeErase) {
-    std::vector<std::byte> buffer;
-    buffer.resize(1024);
+    AlignedVector buffer;
+    buffer.resize(1024, 1024);
     // init inner node
     auto node = new (buffer.data()) BTree::InnerNode();
     node->children[0] = Swip::fromPID(0);
@@ -157,8 +158,8 @@ TEST(EytzingerTest, InnerNodeErase) {
 }
 
 TEST(EytzingerTest, InnerNodeEraseDecreasing) {
-    std::vector<std::byte> buffer;
-    buffer.resize(1024);
+    AlignedVector buffer;
+    buffer.resize(1024, 1024);
     // init inner node
     auto node = new (buffer.data()) BTree::InnerNode();
     node->children[0] = Swip::fromPID(0);
@@ -184,8 +185,8 @@ TEST(EytzingerTest, InnerNodeEraseDecreasing) {
 }
 
 TEST(EytzingerTest, InnerNodeEraseRandomPermutation) {
-    std::vector<std::byte> buffer;
-    buffer.resize(1024);
+    AlignedVector buffer;
+    buffer.resize(1024, 1024);
     // init inner node
     auto node = new (buffer.data()) BTree::InnerNode();
     node->children[0] = Swip::fromPID(0);
@@ -219,10 +220,10 @@ TEST(EytzingerTest, InnerNodeEraseRandomPermutation) {
 }
 
 TEST(EytzingerTest, InnerNodeSplit) {
-    std::vector<char> buffer_left;
-    std::vector<char> buffer_right;
-    buffer_left.resize(1024);
-    buffer_right.resize(1024);
+    AlignedVector buffer_left;
+    AlignedVector buffer_right;
+    buffer_left.resize(1024, 1024);
+    buffer_right.resize(1024, 1024);
 
     auto left_node = new (buffer_left.data()) BTree::InnerNode();
     left_node->children[0] = Swip::fromPID(0u);
@@ -274,10 +275,10 @@ TEST(EytzingerTest, InnerNodeSplit) {
 }
 
 TEST(EytzingerTest, InnerNodeMerge) {
-    std::vector<char> buffer_left;
-    std::vector<char> buffer_right;
-    buffer_left.resize(1024);
-    buffer_right.resize(1024);
+    AlignedVector buffer_left;
+    AlignedVector buffer_right;
+    buffer_left.resize(1024, 1024);
+    buffer_right.resize(1024, 1024);
 
     auto n = BTree::InnerNode::kCapacity;
     // init left node
@@ -314,10 +315,10 @@ TEST(EytzingerTest, InnerNodeMerge) {
 }
 
 TEST(EytzingerTest, InnerNodeRebalance) {
-    std::vector<char> buffer_left;
-    std::vector<char> buffer_right;
-    buffer_left.resize(1024);
-    buffer_right.resize(1024);
+    AlignedVector buffer_left;
+    AlignedVector buffer_right;
+    buffer_left.resize(1024, 1024);
+    buffer_right.resize(1024, 1024);
 
     auto n = BTree::InnerNode::kCapacity;
     // init left node
@@ -368,10 +369,10 @@ TEST(EytzingerTest, InnerNodeRebalance) {
 }
 
 TEST(EytzingerTest, InnerNodeRebalanceRightToLeft) {
-    std::vector<char> buffer_left;
-    std::vector<char> buffer_right;
-    buffer_left.resize(1024);
-    buffer_right.resize(1024);
+    AlignedVector buffer_left;
+    AlignedVector buffer_right;
+    buffer_left.resize(1024, 1024);
+    buffer_right.resize(1024, 1024);
 
     auto n = BTree::InnerNode::kCapacity;
     // init left node

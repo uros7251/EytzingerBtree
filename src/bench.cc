@@ -47,17 +47,33 @@ std::pair<uint64_t,uint64_t> bench() {
 }
 
 int main() {
+    uint64_t ref_insert, ref_lookup, eytzinger_insert, eytzinger_lookup, simd_insert, simd_lookup;
     {
         using BTree = guidedresearch::BTree<uint64_t, uint64_t, std::less<uint64_t>, 1024, guidedresearch::NodeLayout::SORTED>;
-        auto cpl = bench<BTree>();
+        std::tie(ref_insert, ref_lookup) = bench<BTree>();
         std::cout << "Standard BTree:\n"
-            << cpl.first << "cyc/insert, " << cpl.second << "cyc/lookup\n";
+            << ref_insert << "cyc/insert, " << ref_lookup << "cyc/lookup\n";
     }
     {
         using BTree = guidedresearch::BTree<uint64_t, uint64_t, std::less<uint64_t>, 1024, guidedresearch::NodeLayout::EYTZINGER>;
-        auto cpl = bench<BTree>();
+        std::tie(eytzinger_insert, eytzinger_lookup) = bench<BTree>();
         std::cout << "Eytzinger BTree:\n"
-            << cpl.first << "cyc/insert, " << cpl.second << "cyc/lookup\n";
+            << eytzinger_insert << "cyc/insert, " << eytzinger_lookup << "cyc/lookup\n";
     }
+    {
+        using BTree = guidedresearch::BTree<uint64_t, uint64_t, std::less<uint64_t>, 1024, guidedresearch::NodeLayout::EYTZINGER_SIMD>;
+        std::tie(simd_insert, simd_lookup) = bench<BTree>();
+        std::cout << "Eytzinger+SIMD BTree:\n"
+            << simd_insert << "cyc/insert, " << simd_lookup << "cyc/lookup\n";
+    }
+    std::cout << "Eytzinger speedup:\n";
+    std::cout << "insert: " << static_cast<double>(ref_insert)/eytzinger_insert
+            << "x, lookup: " << static_cast<double>(ref_lookup)/eytzinger_lookup
+            << "x\n";
+
+    std::cout << "Eytzinger+SIMD speedup:\n";
+    std::cout << "insert: " << static_cast<double>(ref_insert)/simd_insert
+            << "x, lookup: " << static_cast<double>(ref_lookup)/simd_lookup
+            << "x\n";
 
 }

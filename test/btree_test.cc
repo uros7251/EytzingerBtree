@@ -12,6 +12,7 @@
 
 using BufferFrame = guidedresearch::BufferFrame;
 using BufferManager = guidedresearch::BufferManager;
+using AlignedVector = guidedresearch::AlignedVector;
 using Defer = guidedresearch::Defer;
 using KeyT = uint64_t;
 using ValueT = uint64_t;
@@ -32,7 +33,7 @@ TEST(BTreeTest, Capacity) {
    ASSERT_LE(sizeof(BTree::LeafNode), 1024);
    
    // Larger buffer pages allow nodes with higher fanout
-   using BTree = guidedresearch::BTree<uint64_t, uint64_t, std::less<uint64_t>, 1u << 16, guidedresearch::NodeLayout::SORTED>;
+   using BTree = guidedresearch::BTree<uint64_t, uint64_t, std::less<uint64_t>, 1u << 16, guidedresearch::NodeLayout::EYTZINGER>;
    ASSERT_LE(64000, sizeof(BTree::InnerNode));
    ASSERT_LE(sizeof(BTree::InnerNode), 1u << 16);
    
@@ -102,10 +103,10 @@ TEST(BTreeTest, LeafNodeInsert) {
 
 // NOLINTNEXTLINE
 TEST(BTreeTest, LeafNodeSplit) {
-    std::vector<char> buffer_left;
-    std::vector<char> buffer_right;
-    buffer_left.resize(1024);
-    buffer_right.resize(1024);
+    AlignedVector buffer_left;
+    AlignedVector buffer_right;
+    buffer_left.resize(1024, 1024);
+    buffer_right.resize(1024, 1024);
 
     auto left_node = new (buffer_left.data()) BTree::LeafNode();
     auto right_node = reinterpret_cast<BTree::LeafNode*>(buffer_right.data());
@@ -261,33 +262,7 @@ TEST(BTreeTest, LookupSingleLeaf) {
     }
 }
 
-// NOLINTNEXTLINE
 TEST(BTreeTest, LookupSingleSplit) {
-    BufferManager buffer_manager(1024, 100);
-    BTree tree(0, buffer_manager);
-
-    // Insert values
-    for (auto i = 0ul; i < BTree::LeafNode::kCapacity; ++i) {
-        tree.insert(i, 2 * i);
-    }
-
-    {
-        tree.insert(BTree::LeafNode::kCapacity, 2 * BTree::LeafNode::kCapacity);
-        auto i = BTree::LeafNode::kCapacity;
-        ASSERT_TRUE(tree.lookup(i))
-            << "searching for the just inserted key k=" << BTree::LeafNode::kCapacity << " yields nothing";
-    }
-    // Lookup all values
-    for (auto i = 0ul; i < BTree::LeafNode::kCapacity + 1; ++i) {
-        auto v = tree.lookup(i);
-        ASSERT_TRUE(v)
-            << "key=" << i << " is missing";
-        ASSERT_EQ(*v, 2* i)
-            << "key=" << i << " should have the value v=" << 2*i;
-    }
-}
-
-TEST(BTreeTest, LookupSingleSplit2) {
     BufferManager buffer_manager(1024, 100);
     BTree tree(0, buffer_manager);
 
