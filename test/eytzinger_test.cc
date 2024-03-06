@@ -8,7 +8,7 @@ using BufferManager = guidedresearch::BufferManager;
 using AlignedVector = guidedresearch::AlignedVector;
 using KeyT = uint64_t;
 using ValueT = uint64_t;
-using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, 1024, guidedresearch::NodeLayout::EYTZINGER>;
+using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, 1024, guidedresearch::NodeLayout::EYTZINGER_SIMD>;
 using Swip = guidedresearch::Swip;
 
 namespace {
