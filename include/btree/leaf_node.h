@@ -66,15 +66,18 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, false> : public guidedresea
     void insert(const KeyT &key, const ValueT &value) {
         if (Node::count == kCapacity) throw std::runtime_error("Not enough space!");
         auto [index, found] = lower_bound(key);
-        if (!found && index < Node::count) { // if key should be inserted in the end, no need to move
-            for (auto i=Node::count; i>index; --i) {
-                keys[i] = keys[i-1];
-                values[i] = values[i-1];
-            }
+        if (found) {
+            values[index] = value;
+            return;
+        }
+
+        for (auto i=Node::count; i>index; --i) {
+            keys[i] = keys[i-1];
+            values[i] = values[i-1];
         }
         keys[index] = key;
         values[index] = value;
-        if (!found) ++Node::count;
+        ++Node::count;
     }
 
     /// Erase a key.
@@ -240,10 +243,8 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, true> : public guidedresear
         }
         keys[Node::count] = key;
         values[Node::count] = value;
-        if (index < Node::count) { // if key should be inserted in the end, no need to move
-            for (auto i=Node::count; i>index; --i) {
-                indices[i] = indices[i-1];
-            }
+        for (auto i=Node::count; i>index; --i) {
+            indices[i] = indices[i-1];
         }
         indices[index] = Node::count;
         ++Node::count;

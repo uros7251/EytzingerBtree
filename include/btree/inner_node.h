@@ -95,6 +95,8 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
                 std::make_pair(0u, false); 
         }
         else if constexpr (layout == NodeLayout::EYTZINGER_SIMD) {
+            static_assert(std::is_same_v<KeyT, uint64_t>); // SIMD support provided only for uint64_t
+
             if (Node::count <= 1) return {0u, false}; // no keys
 
             constexpr auto B = CACHELINE/sizeof(KeyT); // block size
@@ -516,16 +518,16 @@ struct InnerNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED> : publ
         // for example, insert_split(3, 40)
         // BEFORE: keys = [1, 4, 9, ?], children = [8, 3, 13, 7, ?], count = 4
         // AFTER: keys = [1, 3, 4, 9], children = [8, 3, 40, 13, 7], count = 5
-
+        
         assert(Node::count-1 != InnerNode::kCapacity);
-        auto [index, _] = lower_bound(key); // find index to insert key
-        for (uint32_t i=Node::count-1; i>index; --i) {
+        uint32_t i; // current contested position (keys[i-1] and key are competing for ith position)
+        for (i=Node::count-1; i > 0 && keys[i-1]>key; --i) {
             keys[i] = keys[i-1];
             children[i+1] = children[i];
         }
-        keys[index] = key; // insert new separator
-        children[index+1] = child; // insert child
-        Node::count++;
+        keys[i] = key; // insert new separator
+        children[i+1] = child; // insert child
+        ++Node::count;
     }
 
     /// @brief Erases a key and a child associated with the next key
