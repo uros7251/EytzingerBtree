@@ -4,6 +4,7 @@
 
 stages:
     - test
+    - bench
 
 tests:
     stage: test
@@ -23,3 +24,12 @@ linter:
         - ninja
         - ninja lint
     allow_failure: true
+
+benchmark:
+    stage: bench
+    script:
+        - mkdir -p build
+        - cd build
+        - cmake -gNinja -DCMAKE)BUILD_TYPE=Release ..
+        - ninja
+        - ./bench
