@@ -30,6 +30,6 @@ benchmark:
     script:
         - mkdir -p build
         - cd build
-        - cmake -gNinja -DCMAKE)BUILD_TYPE=Release ..
+        - cmake -gNinja -DCMAKE_BUILD_TYPE=Release ..
         - ninja
         - ./bench
