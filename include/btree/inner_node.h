@@ -95,14 +95,17 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
                 std::make_pair(0u, false); 
         }
         else if constexpr (layout == NodeLayout::EYTZINGER_SIMD) {
-            static_assert(std::is_same_v<KeyT, uint64_t>); // SIMD support provided only for uint64_t
+            // explained at https://en.algorithmica.org/hpc/data-structures/s-tree/
+            static_assert(std::is_same_v<KeyT, int32_t>); // SIMD support provided only for int32_t
 
             if (Node::count <= 1) return {0u, false}; // no keys
 
             constexpr auto B = CACHELINE/sizeof(KeyT); // block size
             
             #if defined(__AVX512F__) && defined(__AVX512VL__)
-            __m512i key_vec = _mm512_set1_epi64(target);
+            __m512i key_vec = _mm512_set1_epi32(target);
+            #elif defined(__AVX__) && defined(__AVX2__)
+            __m256i key_vec = _mm256_set1_epi32(target);
             #else
             ComparatorT less;
             #endif
@@ -115,7 +118,9 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
                 // comparison
                 #if defined(__AVX512F__) && defined(__AVX512VL__)
                 __m512i y_vec = _mm512_load_si512(&keys[i*B]);
-                mask |= _mm512_cmplt_epu64_mask(y_vec, key_vec);
+                mask |= _mm512_cmplt_epi32_mask(y_vec, key_vec);
+                #elif defined(__AVX__) && defined(__AVX2__)
+                mask |= less256(key_vec, &keys[i*B]) + (less256(key_vec, &keys[i*B+8]) << 8);
                 #else
                 for (; j<B; ++j) {
                     mask |= (less(keys[i*B+j], target) << j);
@@ -453,6 +458,14 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
             keys[i] = std::numeric_limits<KeyT>::max();
         }
     }
+
+    #if !defined(__AVX512F__) && defined(__AVX__) && defined(__AVX2__)
+    static int less256(__m256i x_vec, int* y_ptr) {
+        __m256i y_vec = _mm256_load_si256((__m256i*) y_ptr); // load 8 sorted elements
+        __m256i mask = _mm256_cmpgt_epi32(x_vec, y_vec); // compare against the key
+        return _mm256_movemask_ps((__m256) mask);    // extract the 8-bit mask
+    }
+    #endif
 };
 
 

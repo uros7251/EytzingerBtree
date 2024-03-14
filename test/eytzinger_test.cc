@@ -6,8 +6,8 @@
 using BufferFrame = guidedresearch::BufferFrame;
 using BufferManager = guidedresearch::BufferManager;
 using AlignedVector = guidedresearch::AlignedVector;
-using KeyT = uint64_t;
-using ValueT = uint64_t;
+using KeyT = int32_t;
+using ValueT = int64_t;
 using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, 1024, guidedresearch::NodeLayout::EYTZINGER_SIMD>;
 using Swip = guidedresearch::Swip;
 
@@ -16,8 +16,8 @@ namespace {
 TEST(EytzingerTest, BlockIterator) {
     using Iterator = guidedresearch::BlockIterator<64/sizeof(KeyT)>;
     auto it = Iterator::begin(20);
-    ASSERT_EQ(*it, 8);
-    std::vector<uint32_t> expected = {8,9,10,11,12,13,14,15,1,16,17,18,19,2,3,4,5,6,7};
+    ASSERT_EQ(*it, 16);
+    std::vector<uint32_t> expected = {16,17,18,19,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15 };
     for (auto i = 0u; i < expected.size(); ++i) {
         ASSERT_EQ(*it, expected[i]);
         ++it;
@@ -25,7 +25,7 @@ TEST(EytzingerTest, BlockIterator) {
     ASSERT_TRUE(it == Iterator::end(20));
 
     it = Iterator::rbegin(20);
-    ASSERT_EQ(*it, 7);
+    ASSERT_EQ(*it, 15);
     for (auto i = expected.size(); i > 0;) {
         ASSERT_EQ(*it, expected[--i]);
         --it;
@@ -295,7 +295,7 @@ TEST(EytzingerTest, InnerNodeMerge) {
         left_node->insert_split(i, j);
     }
     ASSERT_EQ(left_node->count, n/2);
-    uint64_t separator = n/2;
+    int32_t separator = n/2;
     // insert into right node
     for (uint32_t i = 1, j = 2; i < n/2; ++i, j = i * 2) {
         right_node->insert_split(n/2 + i, (n & (~0x1)) + j);

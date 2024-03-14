@@ -14,9 +14,9 @@ using BufferFrame = guidedresearch::BufferFrame;
 using BufferManager = guidedresearch::BufferManager;
 using AlignedVector = guidedresearch::AlignedVector;
 using Defer = guidedresearch::Defer;
-using KeyT = uint64_t;
-using ValueT = uint64_t;
-using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, 1024, guidedresearch::NodeLayout::EYTZINGER>;
+using KeyT = int32_t;
+using ValueT = int64_t;
+using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, 1024, guidedresearch::NodeLayout::EYTZINGER_SIMD>;
 
 namespace {
 
@@ -33,7 +33,7 @@ TEST(BTreeTest, Capacity) {
    ASSERT_LE(sizeof(BTree::LeafNode), 1024);
    
    // Larger buffer pages allow nodes with higher fanout
-   using BTree = guidedresearch::BTree<uint64_t, uint64_t, std::less<uint64_t>, 1u << 16, guidedresearch::NodeLayout::EYTZINGER>;
+   using BTree = guidedresearch::BTree<int32_t, int64_t, std::less<int32_t>, 1u << 16, guidedresearch::NodeLayout::EYTZINGER>;
    ASSERT_LE(64000, sizeof(BTree::InnerNode));
    ASSERT_LE(sizeof(BTree::InnerNode), 1u << 16);
    
@@ -338,7 +338,7 @@ TEST(BTreeTest, LookupRandomNonRepeating) {
     auto n = 100 * BTree::LeafNode::kCapacity;
 
     // Generate random non-repeating key sequence
-    std::vector<uint64_t> keys(n);
+    std::vector<int32_t> keys(n);
     std::iota(keys.begin(), keys.end(), n);
     std::mt19937_64 engine(0);
     std::shuffle(keys.begin(), keys.end(), engine);
@@ -368,11 +368,11 @@ TEST(BTreeTest, LookupRandomRepeating) {
 
     // Insert & updated 100 keys at random
     std::mt19937_64 engine{0};
-    std::uniform_int_distribution<uint64_t> key_distr(0, 99);
-    std::vector<uint64_t> values(100);
+    std::uniform_int_distribution<int32_t> key_distr(0, 99);
+    std::vector<int64_t> values(100);
 
     for (auto i = 1ul; i < n; ++i) {
-        uint64_t rand_key = key_distr(engine);
+        int32_t rand_key = key_distr(engine);
         values[rand_key] = i;
         tree.insert(rand_key, i);
 
@@ -451,7 +451,7 @@ TEST(BTreeTest, RandomErase) {
     BTree tree(0, buffer_manager);
     auto n = 64 * BTree::LeafNode::kCapacity;
     // Insert n keys
-    std::vector<uint64_t> keys(n);
+    std::vector<int32_t> keys(n);
     for (auto i=0u; i<n; ++i) {
         keys[i] = i;
         tree.insert(i, 2*i);
@@ -493,7 +493,7 @@ TEST(BTreeTest, MultithreadWriters) {
                 auto res = tree.lookup(i);
                 ASSERT_TRUE(res)
                     << "k=" << i << " was not in the tree!";
-                ASSERT_TRUE(*res == 2 * i)
+                ASSERT_TRUE(*res == static_cast<int64_t>( 2 * i ))
                     << "k=" << i << " should have value " << 2*i;
             }
 

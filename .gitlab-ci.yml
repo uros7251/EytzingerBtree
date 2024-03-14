@@ -13,7 +13,7 @@ tests:
         - cd build
         - cmake -GNinja -DCMAKE_BUILD_TYPE=Debug ..
         - ninja
-        - ./tester --gtest_filter=BTreeTest.*
+        - ./tester
 
 linter:
     stage: test

@@ -6,6 +6,8 @@
 #include "btree/btree.h"
 
 using BufferManager = guidedresearch::BufferManager;
+using KeyT = int32_t;
+using ValueT = int64_t;
 
 uint64_t rdtsc() {
   unsigned int lo, hi;
@@ -22,7 +24,7 @@ std::tuple<uint64_t,uint64_t, uint64_t> bench() {
     BTree tree(0, buffer_manager);
 
     // Generate random non-repeating key sequence
-    std::vector<uint64_t> keys(n);
+    std::vector<int32_t> keys(n);
     std::iota(keys.begin(), keys.end(), n);
     std::mt19937_64 engine(10);
     std::shuffle(keys.begin(), keys.end(), engine);
@@ -65,15 +67,15 @@ void page_size_comparison() {
 
     std::cout << "Page size: " << page_sizes[4u-n] << "\n";
     
-    auto [insert, lookup, erase] = bench<uint64_t, uint64_t, std::less<uint64_t>, page_sizes[4u-n], guidedresearch::NodeLayout::SORTED>();
+    auto [insert, lookup, erase] = bench<KeyT, ValueT, std::less<KeyT>, page_sizes[4u-n], guidedresearch::NodeLayout::SORTED>();
     std::cout << "Standard BTree:\n"
         << insert << "cyc/insert, " << lookup << "cyc/lookup, " << erase << "cyc/erase\n";
 
-    std::tie(insert, lookup, erase) = bench<uint64_t, uint64_t, std::less<uint64_t>, page_sizes[4u-n], guidedresearch::NodeLayout::EYTZINGER>();
+    std::tie(insert, lookup, erase) = bench<KeyT, ValueT, std::less<KeyT>, page_sizes[4u-n], guidedresearch::NodeLayout::EYTZINGER>();
     std::cout << "Eytzinger BTree:\n"
         << insert << "cyc/insert, " << lookup << "cyc/lookup, " << erase << "cyc/erase\n";
 
-    std::tie(insert, lookup, erase) = bench<uint64_t, uint64_t, std::less<uint64_t>, page_sizes[4u-n], guidedresearch::NodeLayout::EYTZINGER_SIMD>();
+    std::tie(insert, lookup, erase) = bench<KeyT, ValueT, std::less<KeyT>, page_sizes[4u-n], guidedresearch::NodeLayout::EYTZINGER_SIMD>();
     std::cout << "Eytzinger+SIMD BTree:\n"
         << insert << "cyc/insert, " << lookup << "cyc/lookup, " << erase << "cyc/erase\n\n";
     
@@ -86,22 +88,22 @@ void page_size_comparison<0u>() {
 }
 
 void layout_comparison() {
-    constexpr size_t page_size = 65536;
+    constexpr size_t page_size = 4096; //65536;
     uint64_t ref_insert, ref_lookup, ref_erase,
             eytzinger_insert, eytzinger_lookup, eytzinger_erase,
             simd_insert, simd_lookup, simd_erase;
     {
-        std::tie(ref_insert, ref_lookup, ref_erase) = bench<uint64_t, uint64_t, std::less<uint64_t>, page_size, guidedresearch::NodeLayout::SORTED>();
+        std::tie(ref_insert, ref_lookup, ref_erase) = bench<KeyT, ValueT, std::less<KeyT>, page_size, guidedresearch::NodeLayout::SORTED>();
         std::cout << "Standard BTree:\n"
             << ref_insert << "cyc/insert, " << ref_lookup << "cyc/lookup, " << ref_erase << "cyc/erase\n";
     }
     {
-        std::tie(eytzinger_insert, eytzinger_lookup, eytzinger_erase) = bench<uint64_t, uint64_t, std::less<uint64_t>, page_size, guidedresearch::NodeLayout::EYTZINGER>();
+        std::tie(eytzinger_insert, eytzinger_lookup, eytzinger_erase) = bench<KeyT, ValueT, std::less<KeyT>, page_size, guidedresearch::NodeLayout::EYTZINGER>();
         std::cout << "Eytzinger BTree:\n"
             << eytzinger_insert << "cyc/insert, " << eytzinger_lookup << "cyc/lookup, " << eytzinger_erase << "cyc/erase\n";
     }
     {
-        std::tie(simd_insert, simd_lookup, simd_erase) = bench<uint64_t, uint64_t, std::less<uint64_t>, page_size, guidedresearch::NodeLayout::EYTZINGER_SIMD>();
+        std::tie(simd_insert, simd_lookup, simd_erase) = bench<KeyT, ValueT, std::less<KeyT>, page_size, guidedresearch::NodeLayout::EYTZINGER_SIMD>();
         std::cout << "Eytzinger+SIMD BTree:\n"
             << simd_insert << "cyc/insert, " << simd_lookup << "cyc/lookup, " << simd_erase << "cyc/erase\n";
     }
