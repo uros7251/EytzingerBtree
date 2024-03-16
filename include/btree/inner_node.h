@@ -4,33 +4,10 @@
 #include <bit>
 #include <buffer_manager/swip.h>
 #include <btree/node.h>
-#include <btree/iterators.h>
 #include <immintrin.h>
 #include <avx2intrin.h>
 
-#define CACHELINE 64
-
 namespace guidedresearch {
-
-enum class NodeLayout {
-    SORTED,
-    EYTZINGER,
-    EYTZINGER_SIMD
-};
-
-/// @brief Picks iterator based on node layout
-/// @tparam layout 
-/// @return Iterator Type
-template <NodeLayout layout, typename KeyT>
-consteval auto IteratorPicker() {
-    if constexpr (layout == NodeLayout::EYTZINGER) {
-        return std::type_identity<EytzingerIterator>{};
-    } else if constexpr (layout == NodeLayout::EYTZINGER_SIMD) {
-        return std::type_identity<BlockIterator<CACHELINE/sizeof(KeyT)>>{};
-    } else {
-        return std::type_identity<OrderedIterator>{};
-    }
-}
 
 template<typename KeyT, typename ValueT, typename ComparatorT, size_t PageSize, NodeLayout layout>
 struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
@@ -83,7 +60,7 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
             ComparatorT less;
             uint32_t i=1;
             while (i < Node::count) {
-                // __builtin_prefetch(&keys[2*i]);
+                //__builtin_prefetch(&keys[(CACHELINE/sizeof(KeyT))*i]);
                 i = 2*i + less(keys[i], target);
             }
 
@@ -110,7 +87,7 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
             ComparatorT less;
             #endif
 
-            uint32_t N = (Node::count+B-1u)/B; // block_count = ceil(count/B)
+            uint32_t N = (Node::count-1u)/B+1; // block_count = ceil(count/B)
             // save last not-less-than target
             // ComparatorT less;
             auto k=0u;
@@ -236,16 +213,19 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
     /// @brief Erases a key and a child associated with the next key
     /// @param index Index of the key to be erased
     void erase(uint16_t index) {
-        // for example, erase(1)
+        // for example, erase(3)
         // BEFORE: keys = [1, 3, 4, 9], children = [8, 3, 40, 13, 7], count = 5
         // AFTER: keys = [1, 4, 9, 9], children = [8, 3, 13, 7, 7], count = 4
 
         Iterator lag(index, Node::count);
         Iterator lead = lag;
         ComparatorT less;
-        // if index comes last during in-order traversal
+        
+        // prepare children array for later shifting
         if (lead == Iterator::rbegin(Node::count)) {
+            // if index comes last during in-order traversal
             children[0] = children[index];
+            // it's guaranteed that we go left after (take else branch)
         }
         else {
             ++lead;
@@ -303,7 +283,6 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
         children[0] = separator_swip;
         Node::count = left_node_count;
         new_node->count = right_node_count;
-        auto rpids = new_node->get_sorted_pids(), lpids = get_sorted_pids();
         return separator;
     }
 
@@ -344,12 +323,7 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
         return *it;
     }
 
-    /// Returns the keys.
-    std::vector<KeyT> get_key_vector() {
-        return std::vector<KeyT>(&keys[1], &keys[Node::count]);
-    }
-
-    std::vector<uint64_t> get_sorted_pids() {
+    std::vector<uint64_t> get_pid_vector() {
         std::vector<uint64_t> sorted_pids;
         sorted_pids.reserve(Node::count);
         for (auto it = Iterator::begin(Node::count), end = Iterator::end(Node::count); it != end; ++it) {
@@ -360,7 +334,7 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
     }
 
     /// Returns the keys in sorted order
-    std::vector<KeyT> get_sorted_keys() {
+    std::vector<KeyT> get_key_vector() {
         std::vector<KeyT> sorted_keys;
         sorted_keys.reserve(Node::count-1);
         for (auto it = Iterator::begin(Node::count), end = Iterator::end(Node::count); it != end; ++it) {
@@ -532,6 +506,7 @@ struct InnerNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED> : publ
         // BEFORE: keys = [1, 4, 9, ?], children = [8, 3, 13, 7, ?], count = 4
         // AFTER: keys = [1, 3, 4, 9], children = [8, 3, 40, 13, 7], count = 5
         
+        assert(Node::count > 0);
         assert(Node::count-1 != InnerNode::kCapacity);
         uint32_t i; // current contested position (keys[i-1] and key are competing for ith position)
         for (i=Node::count-1; i > 0 && keys[i-1]>key; --i) {
@@ -600,6 +575,15 @@ struct InnerNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED> : publ
     uint32_t last_sorted() { return Node::count-1; }
     uint32_t next_sorted(uint32_t i) { return i+1; }
     uint32_t prev_sorted(uint32_t i) { return i-1; }
+
+    std::vector<uint64_t> get_pid_vector() {
+        std::vector<uint64_t> pids;
+        pids.reserve(Node::count);
+        for (uint32_t i=0; i<Node::count; ++i) {
+            pids.push_back(children[i].asPageID());
+        }
+        return pids;
+    }
 
     /// Returns the keys.
     std::vector<KeyT> get_key_vector() {

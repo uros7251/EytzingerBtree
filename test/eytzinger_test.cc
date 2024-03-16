@@ -3,12 +3,14 @@
 
 #include "btree/btree.h"
 
+#define PageSize 4096
+
 using BufferFrame = guidedresearch::BufferFrame;
 using BufferManager = guidedresearch::BufferManager;
 using AlignedVector = guidedresearch::AlignedVector;
 using KeyT = int32_t;
 using ValueT = int64_t;
-using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, 1024, guidedresearch::NodeLayout::EYTZINGER_SIMD>;
+using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, PageSize, guidedresearch::NodeLayout::EYTZINGER_SIMD>;
 using Swip = guidedresearch::Swip;
 
 namespace {
@@ -70,7 +72,7 @@ TEST(EytzingerTest, InOrderIterator) {
 
 TEST(EytzingerTest, InnerNodeInsert) {
     AlignedVector buffer;
-    buffer.resize(1024, 1024);
+    buffer.resize(PageSize, 1024);
     // init inner node
     auto node = new (buffer.data()) BTree::InnerNode();
     node->children[0] = Swip::fromPID(0);
@@ -88,8 +90,8 @@ TEST(EytzingerTest, InnerNodeInsert) {
     }
 
     // Check the number of keys & children
-    auto keys = node->get_sorted_keys();
-    auto pids = node->get_sorted_pids();
+    auto keys = node->get_key_vector();
+    auto pids = node->get_pid_vector();
     for (uint32_t i = 0, len = keys.size(); i < len; ++i) {
         ASSERT_EQ(keys[i], i+1);
         ASSERT_EQ(2*keys[i], pids[i+1]);
@@ -101,7 +103,7 @@ TEST(EytzingerTest, InnerNodeInsert) {
 
 TEST(EytzingerTest, InnerNodeInsertDecreasing) {
     AlignedVector buffer;
-    buffer.resize(1024, 1024);
+    buffer.resize(PageSize, 1024);
     // init inner node
     auto node = new (buffer.data()) BTree::InnerNode();
     node->children[0] = Swip::fromPID(0);
@@ -119,8 +121,8 @@ TEST(EytzingerTest, InnerNodeInsertDecreasing) {
     }
 
     // Check the number of keys & children
-    auto keys = node->get_sorted_keys();
-    auto pids = node->get_sorted_pids();
+    auto keys = node->get_key_vector();
+    auto pids = node->get_pid_vector();
     for (uint32_t i = 0, len = keys.size(); i < len; ++i) {
         ASSERT_EQ(keys[i], i+1) << "i=" << i;
         ASSERT_EQ(2*keys[i], pids[i+1]);
@@ -132,7 +134,7 @@ TEST(EytzingerTest, InnerNodeInsertDecreasing) {
 
 TEST(EytzingerTest, InnerNodeErase) {
     AlignedVector buffer;
-    buffer.resize(1024, 1024);
+    buffer.resize(PageSize, 1024);
     // init inner node
     auto node = new (buffer.data()) BTree::InnerNode();
     node->children[0] = Swip::fromPID(0);
@@ -159,7 +161,7 @@ TEST(EytzingerTest, InnerNodeErase) {
 
 TEST(EytzingerTest, InnerNodeEraseDecreasing) {
     AlignedVector buffer;
-    buffer.resize(1024, 1024);
+    buffer.resize(PageSize, 1024);
     // init inner node
     auto node = new (buffer.data()) BTree::InnerNode();
     node->children[0] = Swip::fromPID(0);
@@ -186,7 +188,7 @@ TEST(EytzingerTest, InnerNodeEraseDecreasing) {
 
 TEST(EytzingerTest, InnerNodeEraseRandomPermutation) {
     AlignedVector buffer;
-    buffer.resize(1024, 1024);
+    buffer.resize(PageSize, 1024);
     // init inner node
     auto node = new (buffer.data()) BTree::InnerNode();
     node->children[0] = Swip::fromPID(0);
@@ -217,13 +219,14 @@ TEST(EytzingerTest, InnerNodeEraseRandomPermutation) {
         ASSERT_FALSE(found)
             << "k=" << i << " was not removed from the tree";
     }
+    
 }
 
 TEST(EytzingerTest, InnerNodeSplit) {
     AlignedVector buffer_left;
     AlignedVector buffer_right;
-    buffer_left.resize(1024, 1024);
-    buffer_right.resize(1024, 1024);
+    buffer_left.resize(PageSize, 1024);
+    buffer_right.resize(PageSize, 1024);
 
     auto left_node = new (buffer_left.data()) BTree::InnerNode();
     left_node->children[0] = Swip::fromPID(0u);
@@ -238,8 +241,8 @@ TEST(EytzingerTest, InnerNodeSplit) {
     }
 
     // Check the number of keys & children
-    auto left_keys = left_node->get_sorted_keys();
-    auto left_values = left_node->get_sorted_pids();
+    auto left_keys = left_node->get_key_vector();
+    auto left_values = left_node->get_pid_vector();
     ASSERT_EQ(left_keys.size(), n);
     ASSERT_EQ(left_values.size(), n+1);
 
@@ -250,8 +253,8 @@ TEST(EytzingerTest, InnerNodeSplit) {
     ASSERT_EQ(separator, n / 2 + 1);
 
     // Check keys & children of the left node
-    left_keys = left_node->get_sorted_keys();
-    left_values = left_node->get_sorted_pids();
+    left_keys = left_node->get_key_vector();
+    left_values = left_node->get_pid_vector();
     ASSERT_EQ(left_keys.size(), left_node->count-1u);
     ASSERT_EQ(left_values.size(), left_node->count);
     for (auto i = 0; i < left_node->count-1; ++i) {
@@ -262,8 +265,8 @@ TEST(EytzingerTest, InnerNodeSplit) {
     }
 
     // Check keys & children of the right node
-    auto right_keys = right_node->get_sorted_keys();
-    auto right_values = right_node->get_sorted_pids();
+    auto right_keys = right_node->get_key_vector();
+    auto right_values = right_node->get_pid_vector();
     ASSERT_EQ(right_keys.size(), right_node->count-1u);
     ASSERT_EQ(right_values.size(), right_node->count);
     for (auto i = 0; i < right_node->count-1; ++i) {
@@ -277,8 +280,8 @@ TEST(EytzingerTest, InnerNodeSplit) {
 TEST(EytzingerTest, InnerNodeMerge) {
     AlignedVector buffer_left;
     AlignedVector buffer_right;
-    buffer_left.resize(1024, 1024);
-    buffer_right.resize(1024, 1024);
+    buffer_left.resize(PageSize, 1024);
+    buffer_right.resize(PageSize, 1024);
 
     auto n = BTree::InnerNode::kCapacity;
     // init left node
@@ -304,8 +307,8 @@ TEST(EytzingerTest, InnerNodeMerge) {
     // merge
     left_node->merge(*right_node, separator);
     ASSERT_EQ(left_node->count, n & (~0x1));
-    auto keys = left_node->get_sorted_keys();
-    auto values = left_node->get_sorted_pids();
+    auto keys = left_node->get_key_vector();
+    auto values = left_node->get_pid_vector();
     for (uint32_t i = 0; i < left_node->count-1u; ++i) {
         ASSERT_EQ(keys[i], i+1); 
     }
@@ -317,8 +320,8 @@ TEST(EytzingerTest, InnerNodeMerge) {
 TEST(EytzingerTest, InnerNodeRebalance) {
     AlignedVector buffer_left;
     AlignedVector buffer_right;
-    buffer_left.resize(1024, 1024);
-    buffer_right.resize(1024, 1024);
+    buffer_left.resize(PageSize, 1024);
+    buffer_right.resize(PageSize, 1024);
 
     auto n = BTree::InnerNode::kCapacity;
     // init left node
@@ -345,8 +348,8 @@ TEST(EytzingerTest, InnerNodeRebalance) {
     BTree::InnerNode::rebalance(*left_node, *right_node, separator);
     int to_shift = (n+1)/4;
     ASSERT_EQ(left_node->count, n - to_shift);
-    auto left_keys = left_node->get_sorted_keys();
-    auto left_values = left_node->get_sorted_pids();
+    auto left_keys = left_node->get_key_vector();
+    auto left_values = left_node->get_pid_vector();
     // check left node
     for (auto i = 0; i < left_node->count-1; ++i) {
         ASSERT_EQ(left_keys[i], i+1); 
@@ -358,8 +361,8 @@ TEST(EytzingerTest, InnerNodeRebalance) {
     ASSERT_EQ(separator, left_node->count);
     // check right node
     ASSERT_EQ(right_node->count, n/2 + to_shift);
-    auto right_keys = right_node->get_sorted_keys();
-    auto right_values = right_node->get_sorted_pids();
+    auto right_keys = right_node->get_key_vector();
+    auto right_values = right_node->get_pid_vector();
     for (auto i = 0; i < right_node->count-1; ++i) {
         ASSERT_EQ(right_keys[i], i + left_node->count + 1); 
     }
@@ -371,8 +374,8 @@ TEST(EytzingerTest, InnerNodeRebalance) {
 TEST(EytzingerTest, InnerNodeRebalanceRightToLeft) {
     AlignedVector buffer_left;
     AlignedVector buffer_right;
-    buffer_left.resize(1024, 1024);
-    buffer_right.resize(1024, 1024);
+    buffer_left.resize(PageSize, 1024);
+    buffer_right.resize(PageSize, 1024);
 
     auto n = BTree::InnerNode::kCapacity;
     // init left node
@@ -399,8 +402,8 @@ TEST(EytzingerTest, InnerNodeRebalanceRightToLeft) {
     BTree::InnerNode::rebalance(*left_node, *right_node, separator);
     int to_shift = (n+1)/4;
     ASSERT_EQ(left_node->count, n/2 + to_shift);
-    auto left_keys = left_node->get_sorted_keys();
-    auto left_values = left_node->get_sorted_pids();
+    auto left_keys = left_node->get_key_vector();
+    auto left_values = left_node->get_pid_vector();
     // check left node
     for (auto i = 0; i < left_node->count-1; ++i) {
         ASSERT_EQ(left_keys[i], i+1); 
@@ -412,8 +415,8 @@ TEST(EytzingerTest, InnerNodeRebalanceRightToLeft) {
     ASSERT_EQ(separator, left_node->count);
     // check right node
     ASSERT_EQ(right_node->count, n - to_shift);
-    auto right_keys = right_node->get_sorted_keys();
-    auto right_values = right_node->get_sorted_pids();
+    auto right_keys = right_node->get_key_vector();
+    auto right_values = right_node->get_pid_vector();
     for (auto i = 0; i < right_node->count-1; ++i) {
         ASSERT_EQ(right_keys[i], i + left_node->count + 1); 
     }

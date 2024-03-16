@@ -5,11 +5,410 @@
 
 namespace guidedresearch {
 
-template<typename KeyT, typename ValueT, typename ComparatorT, size_t PageSize, bool FastInsertion>
+template<typename KeyT, typename ValueT, typename ComparatorT, size_t PageSize, NodeLayout layout, bool FastInsertion>
 struct LeafNode;
 
+template<typename KeyT, typename ValueT, typename ComparatorT, size_t PageSize, NodeLayout layout>
+struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, false> : public guidedresearch::Node<KeyT, ValueT, ComparatorT, PageSize> {
+    
+    static_assert(PageSize % CACHELINE == 0); // PageSize should be multiple of cacheline size
+    
+    using Node = guidedresearch::Node<KeyT, ValueT, ComparatorT, PageSize>;
+    using Iterator = typename decltype(IteratorPicker<layout, KeyT>())::type;
+    
+    // NOTE: two functions below assume cacheline is 64B!
+    static consteval uint32_t GetKeysOffset() {
+        // keys array has to be aligned on cacheline ie. 64B
+        auto A = std::max(sizeof(Node), alignof(ValueT)); 
+        auto block_offset = (PageSize*sizeof(ValueT)+A*sizeof(KeyT))/(64*(sizeof(ValueT)+sizeof(KeyT)));
+        if ((64*block_offset-A)/sizeof(ValueT) < (PageSize-64*(block_offset+1))/sizeof(KeyT)) ++block_offset;
+        return block_offset*64;
+    }
+    static consteval uint32_t GetKCapacity() {
+        auto A = std::max(sizeof(Node), alignof(ValueT)); 
+        auto block_offset = (PageSize*sizeof(ValueT)+A*sizeof(KeyT))/(64*(sizeof(ValueT)+sizeof(KeyT)));
+        return std::max((64*block_offset-A)/sizeof(ValueT), (PageSize-64*(block_offset+1))/sizeof(KeyT))-1;
+    }
+
+    /// The capacity of a node.
+    static constexpr uint32_t kCapacity = GetKCapacity();
+
+    static consteval uint32_t max_keys() { return kCapacity; }
+    static consteval uint32_t max_values() { return kCapacity; }
+
+    /// The values. Child associated with the key at index i is stored at position i.
+    ValueT values[LeafNode::max_values()+1]; 
+    /// The keys. Stored in index range [1, Node::count]. Aligned to cache line size (64 bytes)
+    alignas(64) KeyT keys[(PageSize-GetKeysOffset())/sizeof(KeyT)]; // we leave first empty 
+
+    /// Constructor.
+    LeafNode() : Node(0, 0) { init(); }
+    LeafNode(const LeafNode &other) = default;
+    
+    /// Assignment operator
+    LeafNode& operator=(const LeafNode &other) = default;
+
+    /// @brief check if node is less than half full
+    /// @return 
+    bool merge_needed() const { return Node::count < max_values()/2; } 
+
+    /// Get the index of the first key that is not less than than a provided key.
+    /// @param[in] key          The key that should be inserted.
+    /// @return                 The index of the first key that is not less than the provided key and boolean indicating if the key is equal.
+    std::pair<uint32_t, bool> lower_bound(const KeyT &target) {
+        if constexpr (layout == NodeLayout::EYTZINGER) {
+            // explained at https://en.algorithmica.org/hpc/data-structures/binary-search/
+            if (Node::count == 0) return {0u, false}; // no keys
+            
+            ComparatorT less;
+            uint32_t i=1;
+            while (i <= Node::count) {
+                //__builtin_prefetch(&keys[(CACHELINE/sizeof(KeyT))*i]);
+                i = 2*i + less(keys[i], target);
+            }
+
+            // recover index
+            i >>= std::countr_one(i)+1;
+
+            return i ? // check if last key is less than key
+                std::make_pair(i, keys[i] == target) :
+                std::make_pair(Node::count+1u, false); 
+        }
+        else if constexpr (layout == NodeLayout::EYTZINGER_SIMD) {
+            // explained at https://en.algorithmica.org/hpc/data-structures/s-tree/
+            static_assert(std::is_same_v<KeyT, int32_t>); // SIMD support provided only for int32_t
+
+            if (Node::count == 0u) return {0u, false}; // no keys
+
+            constexpr auto B = CACHELINE/sizeof(KeyT); // block size
+            
+            #if defined(__AVX512F__) && defined(__AVX512VL__)
+            __m512i key_vec = _mm512_set1_epi32(target);
+            #elif defined(__AVX__) && defined(__AVX2__)
+            __m256i key_vec = _mm256_set1_epi32(target);
+            #else
+            ComparatorT less;
+            #endif
+
+            uint32_t N = Node::count/B+1u; // block_count = floor(count/B)+1
+            // save last not-less-than target
+            // ComparatorT less;
+            auto k=0u;
+            for (uint32_t i=0, j=1, mask=1; i < N; i+=i*B+j, j=0, mask=0) {
+                // comparison
+                #if defined(__AVX512F__) && defined(__AVX512VL__)
+                __m512i y_vec = _mm512_load_si512(&keys[i*B]);
+                mask |= _mm512_cmplt_epi32_mask(y_vec, key_vec);
+                #elif defined(__AVX__) && defined(__AVX2__)
+                mask |= less256(key_vec, &keys[i*B]) + (less256(key_vec, &keys[i*B+8]) << 8);
+                #else
+                for (; j<B; ++j) {
+                    mask |= (less(keys[i*B+j], target) << j);
+                }
+                #endif
+                j = std::countr_one(mask);
+                if (j < B) {
+                    k = i*B+j;
+                }
+            }
+
+            if (k > Node::count) k/=B; // we went left because we encountered MAX value out of bounds, thus we go one step back
+
+            return k ? // check if last key is less than key
+                std::make_pair(k, keys[k] == target) :
+                std::make_pair(Node::count+1u, false);
+        }
+        else if constexpr (layout == NodeLayout::SORTED) {
+            // explained at https://en.algorithmica.org/hpc/data-structures/binary-search/
+            if (Node::count==0) return {0u, false}; // no keys
+        
+            ComparatorT less;
+            uint32_t i=0, n = Node::count;
+            // branchless binary search
+            while (n>1) {
+                auto half = n/2;
+                n -= half; // ceil(n/2)
+                // __builtin_prefetch(&keys[i+n/2-1]); // prefetch left
+                // __builtin_prefetch(&keys[i+half+n/2-1]); // prefetch right
+                i += less(keys[i+half-1], target) * half; // hopefully compiler translates this to cmov
+            }
+
+            return (i==Node::count-1u && less(keys[i], target)) ? // check if last key is less than key
+                std::make_pair(i+1, false) : // return index one after last key
+                std::make_pair(i, keys[i] == target);   
+        }
+        else return std::make_pair(0u, false);
+    }
+
+    /// Insert a key.
+    /// @param[in] key          The key that should be inserted.
+    /// @param[in] value        The value that should be inserted.
+    void insert(const KeyT &key, const ValueT &value) {
+        // for example, insert_split(3, 40)
+        // BEFORE: in_order(keys) = [1, 4, 9], values = [8, 3, 13, 7], count = 3
+        // AFTER: in_order(keys) = [1, 3, 4, 9], values = [8, 4o, 13, 7], count = 4
+
+        assert(Node::count < LeafNode::kCapacity); // more place available
+
+        // trivial case with no keys
+        if (Node::count == 0u) {
+            // no keys
+            keys[1] = key;
+            values[1] = value;
+            ++Node::count;
+            return;
+        }
+
+        auto [index,found] = lower_bound(key);
+        if (found) {
+            values[index] = value;
+            return;
+        }
+
+        // idea is to logically insert a (key, child) pair into the node and then move it to the right place.
+        // we start at the index Node::count+1 (which is the next empty slot) and first determine if to-be-inserted
+        // key should be placed to the left or to the right of it in ascending order (note: if i<j, it might be that 
+        // in_order(i) > in_order(j))
+        
+        ++Node::count;
+        Iterator lead(Node::count, Node::count+1);
+        Iterator lag = lead;
+        ComparatorT less;
+        bool forward;
+        // determine if we should go forward or backward in in-order traversal
+        if (lead == Iterator::rbegin(Node::count+1)) forward = false;
+        else if (lead == Iterator::begin(Node::count+1)) forward = true;
+        else {
+            ++lead;
+            if (less(keys[*lead], key)) {
+                forward = true;
+                keys[*lag] = keys[*lead];
+                values[*lag] = values[*lead];
+                lag = lead;
+            }
+            else {
+                forward = false;
+                --lead;
+            }
+        }
+        assert(lag == lead);
+        if (forward) {
+            ++lead;
+            for (auto end = Iterator::end(Node::count+1); lead != end && less(keys[*lead], key); lag=lead, ++lead) {
+                keys[*lag] = keys[*lead];
+                values[*lag] = values[*lead];
+            }
+        }
+        else {
+            --lead;
+            for (auto end = Iterator::rend(Node::count+1); lead != end && less(key, keys[*lead]); lag=lead, --lead) {
+                keys[*lag] = keys[*lead];
+                values[*lag] = values[*lead];
+            }
+        }
+        keys[*lag] = key;
+        values[*lag] = value;
+    }
+
+    /// Erase a key.
+    bool erase(const KeyT &key) {
+        // for example, erase(3)
+        // BEFORE: keys = [1, 3, 4, 9], values = [8, 3, 40, 13], count = 4
+        // AFTER: keys = [1, 4, 9], values = [8, 40, 13], count = 3
+
+        auto [index, found] = lower_bound(key);
+        if (!found) return false; // key not found
+
+        Iterator lag(index, Node::count+1);
+        Iterator lead = lag;
+        ComparatorT less;
+        
+        if (less(key, keys[Node::count])) {
+            // go right
+            ++lead;
+            for (; *lag != Node::count; lag=lead, ++lead) {
+                keys[*lag] = keys[*lead];
+                values[*lag] = values[*lead];
+            }
+        }
+        else {
+            // go left
+            --lead;
+            for (; *lag != Node::count; lag=lead, --lead) {
+                keys[*lag] = keys[*lead];
+                values[*lag] = values[*lead];
+            }
+        }
+        keys[Node::count] = std::numeric_limits<KeyT>::max();
+        --Node::count;
+        return true;
+    }
+
+    /// Split the node.
+    /// @param[in] buffer       The buffer for the new page.
+    /// @return                 The separator key.
+    KeyT split(char* buffer) {
+        LeafNode* new_node = new (buffer) LeafNode();
+        // new_node->count = Node::count;
+        // old_node retains ceil(count/2) keys
+        // new_node gets floor(count/2) keys
+        uint16_t left_node_count = (Node::count+1u)/2, right_node_count = Node::count/2;
+        assert(left_node_count+right_node_count==Node::count);
+        
+        Iterator old_it = Iterator::rbegin(Node::count+1u), left_it = Iterator::rbegin(left_node_count+1u), right_it = Iterator::rbegin(right_node_count+1u);
+        for (auto i=0; i<right_node_count; ++i, --old_it, --right_it) {
+            new_node->keys[*right_it] = keys[*old_it];
+            new_node->values[*right_it] = values[*old_it];
+        }
+        assert(right_it == Iterator::rend(right_node_count+1));
+        
+        auto separator = keys[*old_it];
+        for (auto i=0; i<left_node_count; ++i, --old_it, --left_it) {
+            keys[*left_it] = keys[*old_it];
+            values[*left_it] = values[*old_it];
+        }
+        assert(left_it == Iterator::rend(left_node_count+1u));
+        assert(old_it == Iterator::rend(Node::count+1u));
+        for (auto i=left_node_count+1; i<=Node::count; ++i) {
+            keys[i] = std::numeric_limits<KeyT>::max();
+        }
+        Node::count = left_node_count;
+        new_node->count = right_node_count;
+        return separator;
+    }
+
+    void merge(LeafNode &other) {
+        Iterator left_it = Iterator::begin(Node::count+1u), right_it = Iterator::begin(other.count+1u), merge_it = Iterator::begin(Node::count+other.count+1u);
+        // rearrange values in left node
+        for (auto i=0; i<Node::count; ++i, ++left_it, ++merge_it) {
+            keys[*merge_it] = keys[*left_it];
+            values[*merge_it] = values[*left_it];
+        }
+        assert(left_it == Iterator::end(Node::count+1u));
+        // insert values from right node
+        for (auto i=0; i<other.count; ++i, ++right_it, ++merge_it) {
+            keys[*merge_it] = other.keys[*right_it];
+            values[*merge_it] = other.values[*right_it];
+        }
+        assert(right_it == Iterator::end(other.count+1u));
+        // update counts
+        Node::count += other.count;
+        other.count = 0;
+    }
+
+    /// Returns the keys.
+    std::vector<KeyT> get_key_vector() {
+        std::vector<KeyT> sorted_keys;
+        sorted_keys.reserve(Node::count);
+        for (auto it = Iterator::begin(Node::count+1u), end = Iterator::end(Node::count+1u); it != end; ++it) {
+            sorted_keys.emplace_back(keys[*it]);
+        }
+        return sorted_keys;
+    }
+
+    /// Returns the values.
+    std::vector<ValueT> get_value_vector() {
+        std::vector<ValueT> sorted_values;
+        sorted_values.reserve(Node::count);
+        for (auto it = Iterator::begin(Node::count+1u), end = Iterator::end(Node::count+1u); it != end; ++it) {
+            sorted_values.emplace_back(values[*it]);
+        }
+        return sorted_values;
+    }
+
+    static void rebalance(LeafNode &left, LeafNode &right, KeyT &separator) {
+        if (left.count > right.count) {
+            // shift right
+            uint16_t to_shift = (left.count-right.count)/2; // shift half the difference
+            Iterator old_right_it = Iterator::rbegin(right.count+1), new_right_it = Iterator::rbegin(right.count+to_shift+1),
+                        old_left_it = Iterator::rbegin(left.count+1), new_left_it = Iterator::rbegin(left.count-to_shift+1);
+            // make space for keys and values from left node
+            for (int i=0; i<right.count; ++i, --old_right_it, --new_right_it) {
+                right.keys[*new_right_it] = right.keys[*old_right_it];
+                right.values[*new_right_it] = right.values[*old_right_it];
+            }
+            assert(old_right_it == Iterator::rend(right.count+1));
+            // insert keys and values from left node
+            for (int i=0; i<to_shift; ++i, --old_left_it, --new_right_it) {
+                right.keys[*new_right_it] = left.keys[*old_left_it];
+                right.values[*new_right_it] = left.values[*old_left_it];
+            }
+            assert(new_right_it == Iterator::rend(right.count+to_shift+1));
+            // update separator
+            separator = left.keys[*old_left_it];
+            // rearrange keys and values in left node
+            for (int i=0; i<left.count-to_shift; ++i, --old_left_it, --new_left_it) {
+                left.keys[*new_left_it] = left.keys[*old_left_it];
+                left.values[*new_left_it] = left.values[*old_left_it];
+            }
+            for (unsigned i=left.count-to_shift+1; i<left.count; ++i) {
+                left.keys[i] = std::numeric_limits<KeyT>::max();
+            }
+            assert(old_left_it == Iterator::rend(left.count+1));
+            assert(new_left_it == Iterator::rend(left.count-to_shift+1));
+            // update counts
+            left.count -= to_shift;
+            right.count += to_shift;
+        }
+        else {
+            // shift left
+            uint16_t to_shift = (right.count-left.count)/2; // shift half the difference
+            Iterator old_right_it = Iterator::begin(right.count+1), new_right_it = Iterator::begin(right.count-to_shift+1),
+                        old_left_it = Iterator::begin(left.count+1), new_left_it = Iterator::begin(left.count+to_shift+1);
+            // make space for keys and values from left node
+            for (int i=0; i<left.count; ++i, ++old_left_it, ++new_left_it) {
+                left.keys[*new_left_it] = left.keys[*old_left_it];
+                left.values[*new_left_it] = left.values[*old_left_it];
+            }
+            assert(old_left_it == Iterator::end(left.count+1));
+            // insert keys and values from right node
+            for (int i=0; i<to_shift-1; ++i, ++old_right_it, ++new_left_it) {
+                left.keys[*new_left_it] = right.keys[*old_right_it];
+                left.values[*new_left_it] = right.values[*old_right_it];
+            }
+            assert(new_left_it == Iterator::rbegin(left.count+to_shift+1));
+            // we take out the last iteration out of loop to update separator as well
+            left.keys[*new_left_it] = right.keys[*old_right_it];
+            left.values[*new_left_it] = right.values[*old_right_it];
+            separator = right.keys[*old_right_it];
+            ++old_right_it;
+            // rearrange keys and values in right node
+            for (int i=0; i<right.count-to_shift; ++i, ++old_right_it, ++new_right_it) {
+                right.keys[*new_right_it] = right.keys[*old_right_it];
+                right.values[*new_right_it] = right.values[*old_right_it];
+            }
+            for (unsigned i=right.count-to_shift+1; i<right.count; ++i) {
+                right.keys[i] = std::numeric_limits<KeyT>::max();
+            }
+            assert(old_right_it == Iterator::end(right.count+1));
+            assert(new_right_it == Iterator::end(right.count-to_shift+1));
+            // update counts
+            left.count += to_shift;
+            right.count -= to_shift;
+        }
+    }
+    
+private:
+    private:
+    void init() {
+        assert((sizeof(keys)/sizeof(KeyT))%8==0);
+        // keys[0] = std::numeric_limits<KeyT>::min();
+        for (auto i=1u; i<sizeof(keys)/sizeof(KeyT); ++i) {
+            keys[i] = std::numeric_limits<KeyT>::max();
+        }
+    }
+
+    #if !defined(__AVX512F__) && defined(__AVX__) && defined(__AVX2__)
+    static int less256(__m256i x_vec, int* y_ptr) {
+        __m256i y_vec = _mm256_load_si256((__m256i*) y_ptr); // load 8 sorted elements
+        __m256i mask = _mm256_cmpgt_epi32(x_vec, y_vec); // compare against the key
+        return _mm256_movemask_ps((__m256) mask);    // extract the 8-bit mask
+    }
+    #endif
+};
+
 template<typename KeyT, typename ValueT, typename ComparatorT, size_t PageSize>
-struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, false> : public guidedresearch::Node<KeyT, ValueT, ComparatorT, PageSize> {
+struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED, false> : public guidedresearch::Node<KeyT, ValueT, ComparatorT, PageSize> {
 
     using Node = guidedresearch::Node<KeyT, ValueT, ComparatorT, PageSize>;
     /// The capacity of a node.
@@ -64,7 +463,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, false> : public guidedresea
     /// @param[in] key          The key that should be inserted.
     /// @param[in] value        The value that should be inserted.
     void insert(const KeyT &key, const ValueT &value) {
-        if (Node::count == kCapacity) throw std::runtime_error("Not enough space!");
+        assert(Node::count < kCapacity);
         auto [index, found] = lower_bound(key);
         if (found) {
             values[index] = value;
@@ -177,7 +576,7 @@ private:
 };
 
 template<typename KeyT, typename ValueT, typename ComparatorT, size_t PageSize>
-struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, true> : public guidedresearch::Node<KeyT, ValueT, ComparatorT, PageSize> {
+struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED, true> : public guidedresearch::Node<KeyT, ValueT, ComparatorT, PageSize> {
 
     using Node = guidedresearch::Node<KeyT, ValueT, ComparatorT, PageSize>;
     /// The capacity of a node.

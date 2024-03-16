@@ -16,12 +16,12 @@ namespace guidedresearch {
 // by prof. Neumann's article https://databasearchitects.blogspot.com/2022/06/btreeoperations.html
 //------------------------------------------------------------------------------------------------
 
-template<typename KeyT, typename ValueT, typename ComparatorT, size_t PageSize, NodeLayout layout = NodeLayout::SORTED>
+template<typename KeyT, typename ValueT, typename ComparatorT, size_t PageSize, NodeLayout inner_layout = NodeLayout::SORTED, NodeLayout leaf_layout = NodeLayout::SORTED>
 struct BTree : public Segment {
     using Node = guidedresearch::Node<KeyT, ValueT, ComparatorT, PageSize>;
-    using InnerNode = guidedresearch::InnerNode<KeyT, ValueT, ComparatorT, PageSize, layout>;
+    using InnerNode = guidedresearch::InnerNode<KeyT, ValueT, ComparatorT, PageSize, inner_layout>;
     // using leaf node designed for fast insertions
-    using LeafNode = guidedresearch::LeafNode<KeyT, ValueT, ComparatorT, PageSize, true>;
+    using LeafNode = guidedresearch::LeafNode<KeyT, ValueT, ComparatorT, PageSize, leaf_layout, false>;
 
     /// The root.
     Swip root;

@@ -16,7 +16,7 @@ using AlignedVector = guidedresearch::AlignedVector;
 using Defer = guidedresearch::Defer;
 using KeyT = int32_t;
 using ValueT = int64_t;
-using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, 1024, guidedresearch::NodeLayout::EYTZINGER_SIMD>;
+using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, 1024, guidedresearch::NodeLayout::EYTZINGER_SIMD, guidedresearch::NodeLayout::EYTZINGER_SIMD>;
 
 namespace {
 
@@ -407,6 +407,7 @@ TEST(BTreeTest, EraseIncreasing) {
     }
 
     auto pages_used = tree.used_pages_count.load();
+    tree.lookup(5041u);
 
     // Iteratively erase all values in ascending order
     // Here the left node will always either soak the right sibling or take part of its keys 

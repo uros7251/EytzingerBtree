@@ -15,18 +15,19 @@ uint64_t rdtsc() {
   return ((uint64_t)hi << 32) | lo;
 }
 
-template<typename KeyT, typename ValueT, typename ComparatorT, size_t PageSize, guidedresearch::NodeLayout layout>
+template<typename KeyT, typename ValueT, typename ComparatorT, size_t PageSize, guidedresearch::NodeLayout inner_layout, guidedresearch::NodeLayout leaf_layout = guidedresearch::NodeLayout::SORTED>
 std::tuple<uint64_t,uint64_t, uint64_t> bench() {
-    using BTree = guidedresearch::BTree<KeyT, ValueT, ComparatorT, PageSize, layout>;
+    using BTree = guidedresearch::BTree<KeyT, ValueT, ComparatorT, PageSize, inner_layout, leaf_layout>;
 
-    auto n = 1u << 20; // ~ 1M keys
-    BufferManager buffer_manager(PageSize, 2*n/BTree::LeafNode::kCapacity);
+    constexpr auto leaf_node_count = 1<<10; // ~ 1k leaf nodes
+    auto n = leaf_node_count*BTree::LeafNode::kCapacity; // ~ 1M keys
+    BufferManager buffer_manager(PageSize, 2*leaf_node_count);
     BTree tree(0, buffer_manager);
 
     // Generate random non-repeating key sequence
     std::vector<int32_t> keys(n);
     std::iota(keys.begin(), keys.end(), n);
-    std::mt19937_64 engine(10);
+    std::mt19937_64 engine(0);
     std::shuffle(keys.begin(), keys.end(), engine);
 
     auto start {rdtsc()};
@@ -87,8 +88,54 @@ void page_size_comparison<0u>() {
     // break recursion
 }
 
+void inner_node_comparison() {
+    constexpr auto PageSize = 1<<14; // 16KB 
+
+    using AlignedVector = guidedresearch::AlignedVector;
+    using KeyT = int32_t;
+    using ValueT = int64_t;
+    using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, PageSize, guidedresearch::NodeLayout::SORTED>;
+    using Swip = guidedresearch::Swip;
+
+    AlignedVector buffer;
+    buffer.resize(PageSize, 1024);
+    // init inner node
+    auto node = new (buffer.data()) BTree::InnerNode();
+    node->children[0] = Swip::fromPID(0);
+    node->count = 1;
+
+    auto n = BTree::InnerNode::kCapacity;
+
+    std::vector<uint32_t> keys;
+    keys.reserve(n);
+
+    // Insert children into the leaf nodes
+    for (uint32_t i = 1, j = 2; i <= n; ++i, j = i * 2) {
+        Swip s = Swip::fromPID(j);
+        node->insert_split(i, s);
+        keys.push_back(i);
+    }
+
+    // std::random_device rd;
+    std::mt19937 g(7251);
+    std::shuffle(keys.begin(), keys.end(), g);
+    
+    auto time=rdtsc();
+    int checksum = 0;
+    constexpr auto N = 1<<10;
+    for (auto j=0; j<N; ++j) {
+    for (auto i : keys) {
+        auto [index, found] = node->lower_bound(i);
+        if (found) checksum ^= index;
+    }
+    }
+    time = rdtsc()-time;
+    if (checksum) std::cerr << "checksum: " << checksum << "!\n";
+    std::cout << "Time:" << time/(n*N) << " cycles\n";
+}
+
 void layout_comparison() {
-    constexpr size_t page_size = 4096; //65536;
+    constexpr size_t page_size = 4096<<1;
     uint64_t ref_insert, ref_lookup, ref_erase,
             eytzinger_insert, eytzinger_lookup, eytzinger_erase,
             simd_insert, simd_lookup, simd_erase;
@@ -98,12 +145,12 @@ void layout_comparison() {
             << ref_insert << "cyc/insert, " << ref_lookup << "cyc/lookup, " << ref_erase << "cyc/erase\n";
     }
     {
-        std::tie(eytzinger_insert, eytzinger_lookup, eytzinger_erase) = bench<KeyT, ValueT, std::less<KeyT>, page_size, guidedresearch::NodeLayout::EYTZINGER>();
+        std::tie(eytzinger_insert, eytzinger_lookup, eytzinger_erase) = bench<KeyT, ValueT, std::less<KeyT>, page_size, guidedresearch::NodeLayout::EYTZINGER, guidedresearch::NodeLayout::SORTED>();
         std::cout << "Eytzinger BTree:\n"
             << eytzinger_insert << "cyc/insert, " << eytzinger_lookup << "cyc/lookup, " << eytzinger_erase << "cyc/erase\n";
     }
     {
-        std::tie(simd_insert, simd_lookup, simd_erase) = bench<KeyT, ValueT, std::less<KeyT>, page_size, guidedresearch::NodeLayout::EYTZINGER_SIMD>();
+        std::tie(simd_insert, simd_lookup, simd_erase) = bench<KeyT, ValueT, std::less<KeyT>, page_size, guidedresearch::NodeLayout::EYTZINGER_SIMD, guidedresearch::NodeLayout::SORTED>();
         std::cout << "Eytzinger+SIMD BTree:\n"
             << simd_insert << "cyc/insert, " << simd_lookup << "cyc/lookup, " << simd_erase << "cyc/erase\n";
     }
@@ -121,7 +168,8 @@ void layout_comparison() {
 }
 
 int main() {
-    page_size_comparison<4>();
-    //layout_comparison();
+    //page_size_comparison<4>();
+    layout_comparison();
+    //inner_node_comparison();
     return 0;
 }
