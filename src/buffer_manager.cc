@@ -51,19 +51,18 @@ void BufferManager::fix_page_slow(Swip& swip) {
 }
 
 
-void BufferManager::unfix_page(BufferFrame& page, bool is_dirty) {
+void BufferManager::unfix_page([[maybe_unused]] BufferFrame& page, [[maybe_unused]] bool is_dirty) {
+   #ifndef SINGLE_THREADED
    if (page.exclusive) {
       page.exclusive = false;
       page.dirty = is_dirty;
-      #ifndef SINGLE_THREADED
       page.latch.unlock();
-      #endif
+      
    }
    else {
-      #ifndef SINGLE_THREADED
       page.latch.unlock_shared();
-      #endif
    }
+   #endif
 }
 
 std::vector<u64> BufferManager::get_all_pages() const

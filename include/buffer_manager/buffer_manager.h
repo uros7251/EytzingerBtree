@@ -101,22 +101,20 @@ class BufferManager {
    /// @param[in] exclusive If `exclusive` is true, the page is locked
    ///                      exclusively. Otherwise it is locked
    ///                      non-exclusively (shared).
-   inline BufferFrame& fix_page(Swip& swip, bool exclusive) {
+   inline BufferFrame& fix_page(Swip& swip, [[maybe_unused]] bool exclusive) {
       if (swip.isUNSWIZZLED()) {
          fix_page_slow(swip);
       }
       auto &bf = swip.asBufferFrame();
+      #ifndef SINGLE_THREADED
       if (exclusive) {
-         #ifndef SINGLE_THREADED
          bf.latch.lock();
-         #endif
          bf.exclusive = true;
       }
       else {
-         #ifndef SINGLE_THREADED
          bf.latch.lock_shared();
-         #endif
       }
+      #endif
       return bf;
    }
 

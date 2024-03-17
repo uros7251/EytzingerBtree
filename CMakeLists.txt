@@ -38,6 +38,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/include/btree
     ${CMAKE_SOURCE_DIR}/include/buffer_manager
+    ${CMAKE_SOURCE_DIR}/include/utils
 )
 
 include_directories(SYSTEM

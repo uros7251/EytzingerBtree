@@ -38,6 +38,14 @@ struct BTree : public Segment {
     /// Destructor.
     ~BTree() = default;
 
+    /// @brief Return depth of the tree
+    /// @return depth of the tree
+    uint16_t depth() {
+        SharedPage page(buffer_manager, root);
+        auto *node = reinterpret_cast<Node*>(page->get_data());
+        return node->level;
+    }
+
     /// Lookup an entry in the tree.
     /// @param[in] key      The key that should be searched.
     /// @return             Whether the key was in the tree.
