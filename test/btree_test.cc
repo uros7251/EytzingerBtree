@@ -480,8 +480,8 @@ TEST(BTreeTest, MultithreadWriters) {
     threads.reserve(thread_count);
     for (size_t thread = 0; thread < thread_count; ++thread) {
         threads.emplace_back([thread, &sync_point, &tree] {
-            size_t startValue = thread * 8 * BTree::LeafNode::kCapacity;
-            size_t limit = startValue + 8 * BTree::LeafNode::kCapacity;
+            size_t startValue = thread * 32 * BTree::LeafNode::kCapacity;
+            size_t limit = startValue + 32 * BTree::LeafNode::kCapacity;
             // Insert values
             for (auto i = startValue; i < limit; ++i) {
                 tree.insert(i, 2 * i);
@@ -517,6 +517,37 @@ TEST(BTreeTest, MultithreadWriters) {
     }
     for (auto& t : threads)
         t.join();
+}
+
+TEST(BTreeTest, ThreeLevelTree) {
+    auto n = 1u << 19; // ~ 512K keys
+    std::mt19937_64 engine{0};
+
+    BufferManager buffer_manager(1024, 2*(n/BTree::LeafNode::kCapacity+1));
+    BTree tree(0, buffer_manager);
+
+    std::vector<int32_t> keys(n);
+    std::iota(keys.begin(), keys.end(), 1);
+    std::shuffle(keys.begin(), keys.end(), engine);
+
+    // insert n keys
+    for (auto k: keys) {
+        tree.insert(k, 2 * k);
+    }
+    
+    std::uniform_int_distribution<int32_t> key_distr(1, n);
+
+    for (auto i = 1ul; i < n*4; ++i) {
+        int32_t rand_key = key_distr(engine);
+        ASSERT_TRUE(tree.lookup(rand_key))
+            << "k=" << rand_key << " for i=" << i << " was not in the tree";
+    }
+
+    for (auto k: keys) {
+        tree.erase(k);
+        ASSERT_FALSE(tree.lookup(k))
+            << "k=" << k << " was not removed from the tree";
+    }
 }
 
 }  // namespace
