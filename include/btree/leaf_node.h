@@ -90,7 +90,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, false> : public gui
             ComparatorT less;
             #endif
 
-            uint32_t N = Node::count/B+1u; // block_count = floor(count/B)+1
+            uint32_t N = Node::count/B+1u; // block_count = block index of the last element + 1
             // save last not-less-than target
             // ComparatorT less;
             auto k=0u;
@@ -98,9 +98,9 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, false> : public gui
                 // comparison
                 #if defined(__AVX512F__) && defined(__AVX512VL__)
                 __m512i y_vec = _mm512_load_si512(&keys[i*B]);
-                mask |= _mm512_cmplt_epi32_mask(y_vec, key_vec);
+                mask = _mm512_cmplt_epi32_mask(y_vec, key_vec); // we assume target > MIN_INT32, replace '=' with '|=' for any target
                 #elif defined(__AVX__) && defined(__AVX2__)
-                mask |= less256(key_vec, &keys[i*B]) + (less256(key_vec, &keys[i*B+8]) << 8);
+                mask = less256(key_vec, &keys[i*B]) + (less256(key_vec, &keys[i*B+8]) << 8);
                 #else
                 for (; j<B; ++j) {
                     mask |= (less(keys[i*B+j], target) << j);
@@ -108,13 +108,12 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, false> : public gui
                 #endif
                 j = std::countr_one(mask);
                 if (j < B) {
+                    // save descent to the left
                     k = i*B+j;
                 }
             }
 
-            if (k > Node::count) k/=B; // we went left because we encountered MAX value out of bounds, thus we go one step back
-
-            return k ? // check if last key is less than key
+            return k ? // k==0 means all keys are less than target
                 std::make_pair(k, keys[k] == target) :
                 std::make_pair(Node::count+1u, false);
         }
@@ -239,7 +238,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, false> : public gui
                 values[*lag] = values[*lead];
             }
         }
-        keys[Node::count] = std::numeric_limits<KeyT>::max();
+        keys[Node::count] = std::numeric_limits<KeyT>::min();
         --Node::count;
         return true;
     }
@@ -270,7 +269,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, false> : public gui
         assert(left_it == Iterator::rend(left_node_count+1u));
         assert(old_it == Iterator::rend(Node::count+1u));
         for (auto i=left_node_count+1; i<=Node::count; ++i) {
-            keys[i] = std::numeric_limits<KeyT>::max();
+            keys[i] = std::numeric_limits<KeyT>::min();
         }
         Node::count = left_node_count;
         new_node->count = right_node_count;
@@ -341,8 +340,8 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, false> : public gui
                 left.keys[*new_left_it] = left.keys[*old_left_it];
                 left.values[*new_left_it] = left.values[*old_left_it];
             }
-            for (unsigned i=left.count-to_shift+1; i<left.count; ++i) {
-                left.keys[i] = std::numeric_limits<KeyT>::max();
+            for (unsigned i=left.count-to_shift+1; i<=left.count; ++i) {
+                left.keys[i] = std::numeric_limits<KeyT>::min();
             }
             assert(old_left_it == Iterator::rend(left.count+1));
             assert(new_left_it == Iterator::rend(left.count-to_shift+1));
@@ -377,8 +376,8 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, false> : public gui
                 right.keys[*new_right_it] = right.keys[*old_right_it];
                 right.values[*new_right_it] = right.values[*old_right_it];
             }
-            for (unsigned i=right.count-to_shift+1; i<right.count; ++i) {
-                right.keys[i] = std::numeric_limits<KeyT>::max();
+            for (unsigned i=right.count-to_shift+1; i<=right.count; ++i) {
+                right.keys[i] = std::numeric_limits<KeyT>::min();
             }
             assert(old_right_it == Iterator::end(right.count+1));
             assert(new_right_it == Iterator::end(right.count-to_shift+1));
@@ -392,9 +391,8 @@ private:
     private:
     void init() {
         assert((sizeof(keys)/sizeof(KeyT))%8==0);
-        // keys[0] = std::numeric_limits<KeyT>::min();
-        for (auto i=1u; i<sizeof(keys)/sizeof(KeyT); ++i) {
-            keys[i] = std::numeric_limits<KeyT>::max();
+        for (auto i=0u; i<sizeof(keys)/sizeof(KeyT); ++i) {
+            keys[i] = std::numeric_limits<KeyT>::min();
         }
     }
 

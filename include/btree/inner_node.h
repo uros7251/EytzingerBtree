@@ -87,7 +87,7 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
             ComparatorT less;
             #endif
 
-            uint32_t N = (Node::count-1u)/B+1; // block_count = ceil(count/B)
+            uint32_t N = (Node::count-1u)/B+1; // block_count = block index of the last element + 1
             // save last not-less-than target
             // ComparatorT less;
             auto k=0u;
@@ -95,9 +95,9 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
                 // comparison
                 #if defined(__AVX512F__) && defined(__AVX512VL__)
                 __m512i y_vec = _mm512_load_si512(&keys[i*B]);
-                mask |= _mm512_cmplt_epi32_mask(y_vec, key_vec);
+                mask = _mm512_cmplt_epi32_mask(y_vec, key_vec); // we assume target > MIN_INT32, replace '=' with '|=' for any target
                 #elif defined(__AVX__) && defined(__AVX2__)
-                mask |= less256(key_vec, &keys[i*B]) + (less256(key_vec, &keys[i*B+8]) << 8);
+                mask = less256(key_vec, &keys[i*B]) + (less256(key_vec, &keys[i*B+8]) << 8);
                 #else
                 for (; j<B; ++j) {
                     mask |= (less(keys[i*B+j], target) << j);
@@ -105,13 +105,12 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
                 #endif
                 j = std::countr_one(mask);
                 if (j < B) {
+                    // save descent to the left
                     k = i*B+j;
                 }
             }
 
-            if (k >= Node::count) k/=B;
-
-            return k ? // check if last key is less than key
+            return k ? // k==0 means all keys are less than target
                 std::make_pair(k, keys[k] == target) :
                 std::make_pair(0u, false); 
         }
@@ -247,7 +246,7 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
             }
         }
         --Node::count;
-        if (Node::count) keys[Node::count] = std::numeric_limits<KeyT>::max();
+        if (Node::count) keys[Node::count] = std::numeric_limits<KeyT>::min();
     }
 
     /// Split the node.
@@ -266,12 +265,11 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
         for (auto i=0; i<right_node_count-1; ++i, --old_it, --right_it) {
             new_node->keys[*right_it] = keys[*old_it];
             new_node->children[*right_it] = children[*old_it];
-            keys[*old_it] = std::numeric_limits<KeyT>::max();
         }
         assert(right_it == Iterator::rend(right_node_count));
         
         auto separator = keys[*old_it];
-        keys[*old_it] = std::numeric_limits<KeyT>::max();
+        keys[*old_it] = std::numeric_limits<KeyT>::min();
         auto separator_swip = children[*old_it];
         --old_it;
         for (auto i=0; i<left_node_count-1; ++i, --old_it, --left_it) {
@@ -280,6 +278,10 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
         }
         assert(left_it == Iterator::rend(left_node_count));
         assert(old_it == Iterator::rend(Node::count));
+        // set freed keys to maximum
+        for (auto i=left_node_count; i<Node::count; ++i) {
+            keys[i] = std::numeric_limits<KeyT>::min();
+        }
         children[0] = separator_swip;
         Node::count = left_node_count;
         new_node->count = right_node_count;
@@ -374,8 +376,8 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
                 left.keys[*new_left_it] = left.keys[*old_left_it];
                 left.children[*new_left_it] = left.children[*old_left_it];
             }
-            for (unsigned i=left.count-to_shift; i<sizeof(left.keys)/sizeof(KeyT); ++i) {
-                left.keys[i] = std::numeric_limits<KeyT>::max();
+            for (unsigned i=left.count-to_shift; i<left.count; ++i) {
+                left.keys[i] = std::numeric_limits<KeyT>::min();
             }
             assert(old_left_it == Iterator::rend(left.count));
             assert(new_left_it == Iterator::rend(left.count-to_shift));
@@ -413,8 +415,8 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
                 right.keys[*new_right_it] = right.keys[*old_right_it];
                 right.children[*new_right_it] = right.children[*old_right_it];
             }
-            for (unsigned i=right.count-to_shift; i<sizeof(right.keys)/sizeof(KeyT); ++i) {
-                right.keys[i] = std::numeric_limits<KeyT>::max();
+            for (unsigned i=right.count-to_shift; i<right.count; ++i) {
+                right.keys[i] = std::numeric_limits<KeyT>::min();
             }
             assert(old_right_it == Iterator::end(right.count));
             assert(new_right_it == Iterator::end(right.count-to_shift));
@@ -427,9 +429,8 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
     private:
     void init() {
         assert((sizeof(keys)/sizeof(KeyT))%8==0);
-        // keys[0] = std::numeric_limits<KeyT>::min();
-        for (auto i=1u; i<sizeof(keys)/sizeof(KeyT); ++i) {
-            keys[i] = std::numeric_limits<KeyT>::max();
+        for (auto i=0u; i<sizeof(keys)/sizeof(KeyT); ++i) {
+            keys[i] = std::numeric_limits<KeyT>::min();
         }
     }
 
