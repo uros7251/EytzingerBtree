@@ -13,8 +13,6 @@
 #include <mutex>
 #include "buffer_manager/swip.h"
 
-// #define SINGLE_THREADED
-
 namespace guidedresearch {
 
 class AlignedVector {

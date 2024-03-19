@@ -62,6 +62,7 @@ target_link_libraries(grlib Threads::Threads)
 
 add_executable(bench "${CMAKE_SOURCE_DIR}/src/bench.cc" ${SRC_CC})
 target_link_libraries(bench grlib)
+target_compile_definitions(bench PRIVATE SINGLE_THREADED)
 
 # ---------------------------------------------------------------------------
 # Tests
