@@ -95,18 +95,18 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, false> : public gui
             // ComparatorT less;
             auto k=0u;
             for (uint32_t i=0, j=1, mask=1; i < N; i+=i*B+j, j=0, mask=0) {
+                assert(reinterpret_cast<uintptr_t>(&keys[i*B]) % CACHELINE == 0);
                 // comparison
                 #if defined(__AVX512F__) && defined(__AVX512VL__)
                 __m512i y_vec = _mm512_load_si512(&keys[i*B]);
                 mask = _mm512_cmplt_epi32_mask(y_vec, key_vec); // we assume target > MIN_INT32, replace '=' with '|=' for any target
+                j = std::countr_one(mask);
                 #elif defined(__AVX__) && defined(__AVX2__)
                 mask = less256(key_vec, &keys[i*B]) + (less256(key_vec, &keys[i*B+8]) << 8);
-                #else
-                for (; j<B; ++j) {
-                    mask |= (less(keys[i*B+j], target) << j);
-                }
-                #endif
                 j = std::countr_one(mask);
+                #else
+                for (; j<B && less(keys[i*B+j], target); ++j);
+                #endif
                 if (j < B) {
                     // save descent to the left
                     k = i*B+j;

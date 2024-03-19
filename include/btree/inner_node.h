@@ -96,14 +96,13 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
                 #if defined(__AVX512F__) && defined(__AVX512VL__)
                 __m512i y_vec = _mm512_load_si512(&keys[i*B]);
                 mask = _mm512_cmplt_epi32_mask(y_vec, key_vec); // we assume target > MIN_INT32, replace '=' with '|=' for any target
+                j = std::countr_one(mask);
                 #elif defined(__AVX__) && defined(__AVX2__)
                 mask = less256(key_vec, &keys[i*B]) + (less256(key_vec, &keys[i*B+8]) << 8);
-                #else
-                for (; j<B; ++j) {
-                    mask |= (less(keys[i*B+j], target) << j);
-                }
-                #endif
                 j = std::countr_one(mask);
+                #else
+                for (; j<B && less(keys[i*B+j], target); ++j);
+                #endif
                 if (j < B) {
                     // save descent to the left
                     k = i*B+j;
