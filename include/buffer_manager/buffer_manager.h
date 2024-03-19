@@ -36,14 +36,13 @@ class BufferFrame {
    friend class BufferManager;
 
    u64 pid;
+   AlignedVector data;
    bool exclusive = false;
    bool dirty = false;
 
    #ifndef SINGLE_THREADED
    std::shared_mutex latch;
    #endif
-
-   AlignedVector data;
 
    public:
    /// Constructor.

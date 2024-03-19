@@ -13,7 +13,7 @@ BufferFrame::BufferFrame(u64 pid) noexcept : pid(pid) {
 }
 
 BufferFrame::BufferFrame(BufferFrame&& o) noexcept
-   : pid(o.pid), exclusive(o.exclusive), dirty(o.dirty), data(std::move(o.data)) {
+   : pid(o.pid), data(std::move(o.data)), exclusive(o.exclusive), dirty(o.dirty) {
 
 }
 

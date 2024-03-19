@@ -4,8 +4,7 @@
 #include <type_traits>
 #include <forward_list>
 #include "segment.h"
-#include "buffer_manager/unique_page.h"
-#include "buffer_manager/shared_page.h"
+#include "buffer_manager/page_guard.h"
 #include "btree/inner_node.h"
 #include "btree/leaf_node.h"
 
@@ -18,10 +17,14 @@ namespace guidedresearch {
 
 template<typename KeyT, typename ValueT, typename ComparatorT, size_t PageSize, NodeLayout inner_layout = NodeLayout::SORTED, NodeLayout leaf_layout = NodeLayout::SORTED>
 struct BTree : public Segment {
+    using SharedPage = PageGuard<false>;
+    using UniquePage = PageGuard<true>;
     using Node = guidedresearch::Node<KeyT, ValueT, ComparatorT, PageSize>;
     using InnerNode = guidedresearch::InnerNode<KeyT, ValueT, ComparatorT, PageSize, inner_layout>;
     // using leaf node designed for fast insertions
     using LeafNode = guidedresearch::LeafNode<KeyT, ValueT, ComparatorT, PageSize, leaf_layout, false>;
+
+    constexpr static size_t kPageSize = PageSize; // expose page size to the outside
 
     /// The root.
     Swip root;
@@ -49,6 +52,7 @@ struct BTree : public Segment {
     /// Lookup an entry in the tree.
     /// @param[in] key      The key that should be searched.
     /// @return             Whether the key was in the tree.
+    __attribute__((noinline))
     std::optional<ValueT> lookup(const KeyT &key) {
         // q: why we need lock coupling?
         // a: because it might happen that some other thread is running insert operation and it 
@@ -60,7 +64,7 @@ struct BTree : public Segment {
             InnerNode *inner_node = reinterpret_cast<InnerNode*>(node);
             auto [index, match] = inner_node->lower_bound(key);
             Swip swip = inner_node->children[index];
-            parent_page = page;
+            parent_page = std::move(page);
             // lock coupling
             page.fix(swip);
             node = reinterpret_cast<Node*>(page->get_data());
