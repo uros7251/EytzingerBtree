@@ -4,7 +4,8 @@
 #include "buffer_manager/buffer_manager.h"
 
 namespace guidedresearch {
-    
+
+/// A RAII wrapper for a BufferFrame.
 template<bool Exclusive = false>
 class PageGuard {
 private:
@@ -25,6 +26,7 @@ public:
     PageGuard(BufferManager &bm, Swip &swip) : PageGuard(bm, &bm.fix_page(swip, Exclusive)) {}
     ~PageGuard() { unfix(); }
 
+    PageGuard& operator=(const PageGuard& other) = delete;
     PageGuard& operator=(PageGuard&& other) {
         assert(&bm == &other.bm);
         if (this != &other) {
@@ -35,10 +37,9 @@ public:
         }
         return *this;
     }
-    PageGuard& operator=(const PageGuard& other) = delete;
 
     void mark_dirty() { if constexpr(Exclusive) dirty = true; }
-    void fix(Swip& swip) { unfix(); page = &bm.fix_page(swip, true); }
+    void fix(Swip& swip) { unfix(); page = &bm.fix_page(swip, Exclusive); }
     void unfix() { if (page) bm.unfix_page(*page, dirty); reset(); }
 
     BufferFrame* operator->() { assert(page); return page; }
