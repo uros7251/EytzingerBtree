@@ -113,9 +113,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, false> : public gui
                 }
             }
 
-            return k ? // k==0 means all keys are less than target
-                std::make_pair(k, keys[k] == target) :
-                std::make_pair(Node::count+1u, false);
+            return std::make_pair(k, keys[k] == target);
         }
         else if constexpr (layout == NodeLayout::SORTED) {
             // explained at https://en.algorithmica.org/hpc/data-structures/binary-search/
@@ -143,7 +141,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, false> : public gui
     /// @param[in] key          The key that should be inserted.
     /// @param[in] value        The value that should be inserted.
     void insert(const KeyT &key, const ValueT &value) {
-        // for example, insert_split(3, 40)
+        // for example, insert(3, 40)
         // BEFORE: in_order(keys) = [1, 4, 9], values = [8, 3, 13, 7], count = 3
         // AFTER: in_order(keys) = [1, 3, 4, 9], values = [8, 4o, 13, 7], count = 4
 
@@ -164,7 +162,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, false> : public gui
             return;
         }
 
-        // idea is to logically insert a (key, child) pair into the node and then move it to the right place.
+        // the idea is to logically insert a (key, child) pair into the node and then move it to the right place.
         // we start at the index Node::count+1 (which is the next empty slot) and first determine if to-be-inserted
         // key should be placed to the left or to the right of it in ascending order (note: if i<j, it might be that 
         // in_order(i) > in_order(j))
@@ -187,7 +185,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, false> : public gui
             }
             else {
                 forward = false;
-                --lead;
+                lead = lag;
             }
         }
         assert(lag == lead);

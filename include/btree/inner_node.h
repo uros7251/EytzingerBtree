@@ -154,7 +154,7 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
             return;
         }
 
-        // idea is to logically insert a (key, child) pair into the node and then move it to the right place.
+        // the idea is to logically insert a (key, child) pair into the node and then move it to the right place.
         // we start at the index Node::count (which was previously empty) and first determine if to-be-inserted
         // key should be placed to the left or to the right of it in ascending order (note: if i<j, it might be that 
         // in_order(i) > in_order(j))
@@ -176,7 +176,7 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
             }
             else {
                 forward = false;
-                --lead;
+                lead = lag;
             }
         }
         assert(lag == lead);
@@ -197,14 +197,8 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
         keys[*lag] = key;
         // update children
         lead = lag, ++lead;
-        if (lead == Iterator::end(Node::count+1)) {
-            children[*lag] = children[0];
-            children[0] = child;
-        }
-        else {
-            children[*lag] = children[*lead];
-            children[*lead] = child;
-        }
+        children[*lag] = children[*lead];
+        children[*lead] = child;
         ++Node::count;
     }
 

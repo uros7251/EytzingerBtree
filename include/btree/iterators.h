@@ -11,65 +11,77 @@ namespace guidedresearch {
 /// @tparam Block size in units of keys
 template<uint16_t B>
 struct BlockIterator {
-    /// @brief The current block index
-    uint16_t i;
-    /// @brief The current index within the block
-    uint16_t j;
+    // /// @brief The current block index
+    // uint16_t i;
+    // /// @brief The current index within the block
+    // uint16_t j;
+    /// @brief The current index
+    uint16_t k;
     /// @brief The node count
     uint16_t n;
 
     BlockIterator() = delete;
-    BlockIterator(uint32_t i, uint16_t size) :i(i/B), j(i%B), n(size) {}
+    BlockIterator(uint32_t i, uint16_t size) : k(i), n(size) {}
 
-    bool operator==(const BlockIterator &other) const = default;
+    bool operator==(const BlockIterator &other) const { return k == other.k; }
 
-    uint32_t operator*() { return i*B+j; }
+    uint32_t operator*() { return k; }
 
-    /// @brief Calculates the index of the child block of entry (i,j)
-    /// @return Returns the index of the child block of entry (i,j)
-    uint16_t child() { return i*(B+1)+j; } 
-    /// @brief Calculates the entry (u,v) such that its child block is i
-    /// @return Returns the entry (u,v) such that its child block is i
-    std::pair<uint16_t, uint16_t> parent() { return {i/(B+1), i%(B+1)}; }
+    /// @brief Calculates the index of the beginning of child block of entry k
+    /// @return Returns the index of the beginning of child block of entry k
+    uint16_t child() { 
+        // i*(B+1)+j = i*B+j+i = k+i
+        return B*(k+k/B);
+    } 
+    /// @brief Calculates the (block, offset) pair such that its child block is i
+    /// @return Returns the entry (block, offset) such that its child block is i
+    std::pair<uint16_t, uint16_t> parent(uint16_t i) { return {i/(B+1), i%(B+1)}; }
 
     /// @brief Advance the iterator to the next key in in-order traversal
     BlockIterator& operator++() {
-        if (B*(1+child()) < n) {
+        if (B+child() < n) {
             // go to right child
-            i=child()+1;
-            j=0;
-            while (B*child() < n) i=child();
+            k = B+child();
+            // then left as much as possible
+            while (child() < n) k=child();
             return *this;
         }
-        ++j; // increment j
-        while (j>=B || i*B+j>=n) {
-            // climb up until you're not rightmost child and you're within bounds
-            std::tie(i,j) = parent();
+        uint16_t j = k % B + 1, i = k / B;
+        if (k+1u<n && j<B) {
+            ++k;
+            return *this;
         }
+        do {
+            std::tie(i,j) = parent(i);
+        } while (j>=B);
+        k = i*B+j;
         return *this;
     }
 
     /// @brief Advance the iterator to the next key in in-order traversal
     BlockIterator& operator--() {
-        if (B*child() < n) {
-            // go to left child
-            i=child();
-            j=B; // go to the rightmost entry
+        if (child() < n) {
+            k=child()+B-1; // go to left child's rightmost entry
             // go right until either rightmost entry is out of bounds or 
-            while (**this < n && B*child() < n) i=child();
-            j=std::min(j, static_cast<uint16_t>(n-i*B))-1; // if rightmost entry was out of bounds, min will return the second argument
+            while (k < n && child()+B < n) k=child()+2*B-1;
+            // at this point either:
+            // 1. k is out of bounds but k-B+1 is in bounds or
+            // 2. k is in bounds
+            k = k >= n ? n-1u : k;
             return *this;
         }
-        if (j>0) {
+        if (k % B > 0) {
             // go left
-            --j;
+            --k;
             return *this;
         }
+        auto j = k%B, i = k/B;
         while (j==0 && i!=0) {
             // climb up until you're not leftmost child or you're at root block
-            std::tie(i,j) = parent();
+            std::tie(i,j) = parent(i);
         }
         if (j) --j;
+        k = i*B+j;
         return *this;
     }
 
