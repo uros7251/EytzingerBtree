@@ -17,8 +17,6 @@ namespace guidedresearch {
 
 template<typename KeyT, typename ValueT, typename ComparatorT, size_t PageSize, NodeLayout inner_layout = NodeLayout::SORTED, NodeLayout leaf_layout = NodeLayout::SORTED>
 struct BTree : public Segment {
-    using SharedPage = PageGuard<false>;
-    using UniquePage = PageGuard<true>;
     using Node = guidedresearch::Node<KeyT, ValueT, ComparatorT, PageSize>;
     using InnerNode = guidedresearch::InnerNode<KeyT, ValueT, ComparatorT, PageSize, inner_layout>;
     // using leaf node designed for fast insertions
@@ -147,6 +145,12 @@ struct BTree : public Segment {
         }
         LeafNode *leaf = static_cast<LeafNode*>(child);
         leaf->erase(key);
+    }
+
+    template<typename Func>
+    void traverse(Func&& func, KeyT min = kNegInf, KeyT max = kInf) {
+        SharedPage page(buffer_manager, root);
+        return traverse(std::move(page), func, min, max);
     }
 
     private:
@@ -304,6 +308,30 @@ struct BTree : public Segment {
         if ((target <= separator && left_slot != child_slot) || (target > separator && left_slot == child_slot)) {
             child_page = std::move(neighboor_page);
         }
+    }
+
+    template<typename Func>
+    void traverse(SharedPage page, Func &func, KeyT min, KeyT max) {
+        auto *node = reinterpret_cast<Node*>(page->get_data());
+        if (!node->is_leaf()) {
+            InnerNode *inner_node = reinterpret_cast<InnerNode*>(node);
+            auto children = inner_node->enumerate_children(min, max);
+            assert(children.size() > 0);
+            for (size_t i=0; i<children.size()-1u; ++i) {
+                auto index = children[i];
+                SharedPage child_page(buffer_manager, inner_node->children[index]); 
+                traverse(std::move(child_page), func, min, kInf); // transfer ownership to the function argument
+                min = kNegInf;
+            }
+            auto index = children[children.size()-1];
+            SharedPage child_page(buffer_manager, inner_node->children[index]); // lock coupling
+            page.unfix(); // we intentionally unfix the page before transferring control to the last recursive call
+            return traverse(std::move(child_page), func, min, max);
+        }
+        // leaf level
+        auto* leaf_node = reinterpret_cast<LeafNode*>(node);
+        leaf_node->for_each(func, min, max);
+        // page destructor will call unfix
     }
     
 };

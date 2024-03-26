@@ -17,7 +17,7 @@ uint64_t rdtsc() {
 }
 
 template<typename BTree>
-std::tuple<uint64_t,uint64_t, uint64_t> bench(guidedresearch::IntLoad<KeyT>& load) {
+std::tuple<uint64_t,uint64_t, uint64_t, uint64_t> bench(guidedresearch::IntLoad<KeyT>& load) {
     BufferManager buffer_manager(BTree::kPageSize, 2*(load.size/BTree::LeafNode::kCapacity+1));
     BTree tree(0, buffer_manager);
 
@@ -30,6 +30,7 @@ std::tuple<uint64_t,uint64_t, uint64_t> bench(guidedresearch::IntLoad<KeyT>& loa
     for (auto key: keys) {
         tree.insert(key, 2 * key);
     }
+
     std::cerr << "Tree depth: " << tree.depth() << "\n";
 
     auto end {rdtsc()};
@@ -45,14 +46,30 @@ std::tuple<uint64_t,uint64_t, uint64_t> bench(guidedresearch::IntLoad<KeyT>& loa
         if (result) checksum ^= *result;
         else {
             std::cerr << "lookup failed for key " << key << "!\n";
-            return {0, 0, 0};
+            return {0, 0, 0, 0};
         }
     }
+
     if (checksum) std::cerr << "checksum: " << checksum << "!\n";
     end = rdtsc();
     duration = end-start;
     auto lookup_time = duration/m;
 
+    ValueT total = 0;
+    KeyT min = n/64, max = min;
+    auto num_iters = n/100;
+    start = rdtsc();
+    for (auto i=0u; i<num_iters; ++i) {
+        max += n/(2*num_iters);
+        tree.traverse([&total]([[maybe_unused]] const KeyT &k, const ValueT &v) {
+            total += v;
+        }, min, max);
+    }
+    end = rdtsc();
+    auto range_scan_time = (end-start)/num_iters;
+
+    std::cerr << "rangesum: " << total << "!\n";
+    // erase all values
     start = rdtsc();
     for (auto i = 0ul; i < n; ++i) {
         tree.erase(keys[i]);
@@ -60,39 +77,41 @@ std::tuple<uint64_t,uint64_t, uint64_t> bench(guidedresearch::IntLoad<KeyT>& loa
     end = rdtsc();
     duration = end-start;
 
-    return {insert_time, lookup_time, duration/n};
+    return {insert_time, lookup_time, range_scan_time, duration/n};
 }
 
 template<size_t PageSize = 4096>
 void layout_comparison(guidedresearch::IntLoad<KeyT>& load) {
-    uint64_t ref_insert, ref_lookup, ref_erase,
-            eytzinger_insert, eytzinger_lookup, eytzinger_erase,
-            simd_insert, simd_lookup, simd_erase;
+    uint64_t ref_insert, ref_lookup, ref_range_scan, ref_erase,
+            eytzinger_insert, eytzinger_lookup, eytzinger_range_scan, eytzinger_erase,
+            simd_insert, simd_lookup, simd_range_scan, simd_erase;
     {
         using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, PageSize, guidedresearch::NodeLayout::SORTED>;
-        std::tie(ref_insert, ref_lookup, ref_erase) = bench<BTree>(load);
-        std::cout << load.name() << "|" << PageSize << "|Standard|" << ref_insert << "|" << ref_lookup << "|" << ref_erase << "|\n";
+        std::tie(ref_insert, ref_lookup, ref_range_scan, ref_erase) = bench<BTree>(load);
+        std::cout << load.name() << "|" << PageSize << "|Standard|" << ref_insert << "|" << ref_lookup << "|" << ref_range_scan << "|" << ref_erase << "|\n";
     }
     {
         using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, PageSize, guidedresearch::NodeLayout::EYTZINGER, guidedresearch::NodeLayout::EYTZINGER>;
-        std::tie(eytzinger_insert, eytzinger_lookup, eytzinger_erase) = bench<BTree>(load);
-        std::cout << load.name() << "|" << PageSize << "|Eytzinger|" << eytzinger_insert << "|" << eytzinger_lookup << "|" << eytzinger_erase << "|\n";
+        std::tie(eytzinger_insert, eytzinger_lookup, eytzinger_range_scan, eytzinger_erase) = bench<BTree>(load);
+        std::cout << load.name() << "|" << PageSize << "|Eytzinger|" << eytzinger_insert << "|" << eytzinger_lookup << "|" << eytzinger_range_scan << "|" << eytzinger_erase << "|\n";
     }
     {
         using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, PageSize, guidedresearch::NodeLayout::EYTZINGER_SIMD, guidedresearch::NodeLayout::EYTZINGER_SIMD>;
-        std::tie(simd_insert, simd_lookup, simd_erase) = bench<BTree>(load);
-        std::cout << load.name() << "|" << PageSize << "|Eytzinger+SIMD|" << simd_insert << "|" << simd_lookup << "|" << simd_erase << "|\n";
+        std::tie(simd_insert, simd_lookup, simd_range_scan, simd_erase) = bench<BTree>(load);
+        std::cout << load.name() << "|" << PageSize << "|Eytzinger+SIMD|" << simd_insert << "|" << simd_lookup << "|" << simd_range_scan << "|" << simd_erase << "|\n";
     }
 
     std::cout << "Eytzinger speedup:\n";
     std::cout << "insert: " << static_cast<double>(ref_insert)/eytzinger_insert
             << "x, lookup: " << static_cast<double>(ref_lookup)/eytzinger_lookup
+            << "x, range scan: " << static_cast<double>(ref_range_scan)/eytzinger_range_scan
             << "x, erase: " << static_cast<double>(ref_erase)/eytzinger_erase
             << "\n";
 
     std::cout << "Eytzinger+SIMD speedup:\n";
     std::cout << "insert: " << static_cast<double>(ref_insert)/simd_insert
             << "x, lookup: " << static_cast<double>(ref_lookup)/simd_lookup
+            << "x, range scan: " << static_cast<double>(ref_range_scan)/simd_range_scan
             << "x, erase: " << static_cast<double>(ref_erase)/simd_erase
             << "\n";
 }
@@ -168,10 +187,12 @@ void load_comparison() {
         page_size_comparison(load);
     }
 }
+
 int main() {
-    // load_comparison();
-    guidedresearch::UniformLoad<KeyT> load(1<<20);
-    layout_comparison(load);
+    load_comparison();
+    //guidedresearch::UniformLoad<KeyT> load(1<<20);
+    //layout_comparison(load);
     //inner_node_comparison(load);
+    
     return 0;
 }

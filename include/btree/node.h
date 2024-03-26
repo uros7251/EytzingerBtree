@@ -5,6 +5,9 @@
 #include <cstdint>
 #include <btree/iterators.h>
 
+#define kInf std::numeric_limits<KeyT>::max()
+#define kNegInf std::numeric_limits<KeyT>::min()
+
 #define CACHELINE 64
 
 namespace guidedresearch {

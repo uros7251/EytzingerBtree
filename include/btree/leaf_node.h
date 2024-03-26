@@ -70,9 +70,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, false> : public gui
             // recover index
             i >>= std::countr_one(i)+1;
 
-            return i ? // check if last key is less than key
-                std::make_pair(i, keys[i] == target) :
-                std::make_pair(Node::count+1u, false); 
+            return std::make_pair(i, keys[i] == target); 
         }
         else if constexpr (layout == NodeLayout::EYTZINGER_SIMD) {
             // explained at https://en.algorithmica.org/hpc/data-structures/s-tree/
@@ -131,7 +129,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, false> : public gui
             }
 
             return (i==Node::count-1u && less(keys[i], target)) ? // check if last key is less than key
-                std::make_pair(i+1, false) : // return index one after last key
+                std::make_pair(0u, false) : // return index one after last key
                 std::make_pair(i, keys[i] == target);   
         }
         else return std::make_pair(0u, false);
@@ -293,6 +291,28 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, false> : public gui
         other.count = 0;
     }
 
+    template<typename Function>
+    void for_each(Function &f, KeyT lower_bound = kNegInf, KeyT upper_bound = kInf) {
+        // if possible, circumvent the iterator and directly access the keys and values
+        if (lower_bound == kNegInf && upper_bound == kInf) {
+            for (auto i=1u; i<=Node::count; ++i) {
+                f(keys[i], values[i]);
+            }
+            return;
+        }
+
+        Iterator it = 
+            lower_bound == kNegInf ? Iterator::begin(Node::count+1) : // needed because lower_bound implementation assumes all keys are > kNegInf
+            Iterator(this->lower_bound(lower_bound).first, Node::count+1);
+        auto [end, include_end] = lower_bound == kInf ? std::make_pair(0u, false) : this->lower_bound(upper_bound);
+        for (; *it != end; ++it) {
+            f(keys[*it], values[*it]);
+        }
+        if (include_end) {
+            f(keys[end], values[end]);
+        }
+    }
+
     /// Returns the keys.
     std::vector<KeyT> get_key_vector() {
         std::vector<KeyT> sorted_keys;
@@ -451,7 +471,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED, false> 
         }
 
         return (i==Node::count-1u && less(keys[i], key)) ? // check if last key is less than key
-            std::make_pair(i+1, false) : // return index one after last key
+            std::make_pair(static_cast<uint32_t>(Node::count), false) : // return index one after last key
             std::make_pair(i, keys[i] == key); 
     }
 
@@ -515,6 +535,17 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED, false> 
             values[i+Node::count] = other.values[i];
         }
         Node::count += other.count;
+    }
+
+    template<typename Function>
+    void for_each(Function &f, KeyT lower_bound = kNegInf, KeyT upper_bound = kInf) {
+        // circumvent calls to lower_bound if possible
+        auto start = lower_bound == kNegInf ? 0u : this->lower_bound(lower_bound).first;
+        auto [end, include_end] = upper_bound == kInf ? std::make_pair(static_cast<uint32_t>(Node::count), false) : this->lower_bound(upper_bound);
+        end = include_end ? end+1u : end;
+        for (uint16_t i=start; i<end; ++i) {
+            f(keys[i], values[i]);
+        }
     }
 
     /// Returns the keys.
@@ -706,6 +737,17 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED, true> :
             values[i+Node::count] = other.values[other.indices[i]];
         }
         Node::count += other.count;
+    }
+
+    template<typename Function>
+    void for_each(Function &f, KeyT lower_bound = kNegInf, KeyT upper_bound = kInf) {
+        // circumvent calls to lower_bound if possible
+        auto start = lower_bound == kNegInf ? 0u : this->lower_bound(lower_bound, true).first;
+        auto [end, include_end] = upper_bound == kInf ? std::make_pair(Node::count, false) : this->lower_bound(upper_bound, true);
+        end = include_end ? end+1u : end;
+        for (uint16_t i=start; i<end; ++i) {
+            f(keys[indices[i]], values[indices[i]]);
+        }
     }
 
     /// Returns the keys.

@@ -339,7 +339,7 @@ TEST(BTreeTest, LookupRandomNonRepeating) {
 
     // Generate random non-repeating key sequence
     std::vector<int32_t> keys(n);
-    std::iota(keys.begin(), keys.end(), n);
+    std::iota(keys.begin(), keys.end(), 1);
     std::mt19937_64 engine(0);
     std::shuffle(keys.begin(), keys.end(), engine);
 
@@ -394,6 +394,29 @@ TEST(BTreeTest, LookupRandomRepeating) {
         ASSERT_EQ(*v, values[i])
             << "key=" << i << " should have the value v=" << values[i];
     }
+}
+
+TEST(BTreeTest, RangeScan) {
+    BufferManager buffer_manager(1024, 1000);
+    BTree tree(0, buffer_manager);
+    auto n = 100 * BTree::LeafNode::kCapacity;
+
+    // Generate random non-repeating key sequence
+    std::vector<int32_t> keys(n);
+    std::iota(keys.begin(), keys.end(), 1);
+    std::mt19937_64 engine(0);
+    std::shuffle(keys.begin(), keys.end(), engine);
+    for (auto key: keys) {
+        tree.insert(key, 2 * key);
+    }
+    
+    ValueT total = 0;
+    KeyT min = 200, max = 5000;
+    tree.traverse([&total]([[maybe_unused]] const KeyT &k, const ValueT &v) {
+        total += v;
+    }, min, max);
+    ASSERT_EQ(total, max*(max+1) - min*(min-1)) // 2*(min+(min+1)+...+max)
+        << "total should not be " << total;
 }
 
 // NOLINTNEXTLINE

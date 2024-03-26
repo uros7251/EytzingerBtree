@@ -4,6 +4,7 @@
 #include <bit>
 #include <buffer_manager/swip.h>
 #include <btree/node.h>
+#include <buffer_manager/page_guard.h>
 #include <immintrin.h>
 #include <avx2intrin.h>
 
@@ -305,6 +306,20 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
         other.count = 0;
     }
 
+    std::vector<uint32_t> enumerate_children(KeyT lower_bound = kNegInf, KeyT upper_bound = kInf) {
+        assert(lower_bound <= upper_bound);
+        Iterator it = 
+            lower_bound == kNegInf ? Iterator::begin(Node::count) : // needed because lower_bound implementation assumes all keys are > kNegInf
+            Iterator(this->lower_bound(lower_bound).first, Node::count);
+        auto end = this->lower_bound(upper_bound).first;
+        std::vector<uint32_t> children;
+        for (; *it != end; ++it) {
+            children.push_back(*it);
+        }
+        children.push_back(end);
+        return children;
+    }
+
     uint32_t first_sorted() { return *Iterator::begin(Node::count); }
     uint32_t last_sorted() { return 0u; }
     uint32_t next_sorted(uint32_t i) {
@@ -569,6 +584,17 @@ struct InnerNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED> : publ
     uint32_t last_sorted() { return Node::count-1; }
     uint32_t next_sorted(uint32_t i) { return i+1; }
     uint32_t prev_sorted(uint32_t i) { return i-1; }
+
+    std::vector<uint32_t> enumerate_children(KeyT lower_bound = kNegInf, KeyT upper_bound = kInf) {
+        assert(lower_bound <= upper_bound);
+        auto start = lower_bound == kNegInf ? 0u : this->lower_bound(lower_bound).first;
+        auto end = this->lower_bound(upper_bound).first;
+        std::vector<uint32_t> children;
+        for (auto i=start; i<=end; ++i) {
+            children.push_back(i);
+        }
+        return children;
+    }
 
     std::vector<uint64_t> get_pid_vector() {
         std::vector<uint64_t> pids;
