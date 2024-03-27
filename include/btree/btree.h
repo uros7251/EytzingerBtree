@@ -57,7 +57,7 @@ struct BTree : public Segment {
         // splits a node. So, for example, the key we are looking for ends up on a different node
         SharedPage page(buffer_manager, root), parent_page(buffer_manager);
         auto *node = reinterpret_cast<Node*>(page->get_data());
-        while (!node->is_leaf()) {
+        for (auto i=node->level; i>0u; --i) {
             // traverse inner nodes
             InnerNode *inner_node = reinterpret_cast<InnerNode*>(node);
             auto [index, match] = inner_node->lower_bound(key);
@@ -95,7 +95,7 @@ struct BTree : public Segment {
                 child = reinterpret_cast<Node*>(child_page->get_data());
             }
         }
-        while (!child->is_leaf()) {
+        for (auto i=child->level; i>0u; --i) {
             if (child->count == InnerNode::max_children()) {
                 split_node<InnerNode>(child_page, parent_page, key);
             }
@@ -121,7 +121,7 @@ struct BTree : public Segment {
         UniquePage child_page(buffer_manager, root), parent_page(buffer_manager);
         Node *child = reinterpret_cast<Node*>(child_page->get_data());
         InnerNode *parent = nullptr;
-        while (!child->is_leaf()) {
+        for (auto i=child->level; i>0u; --i) {
             parent_page = std::move(child_page);
             parent = static_cast<InnerNode*>(child);
             auto [index, match] = parent->lower_bound(key);

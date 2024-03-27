@@ -636,9 +636,10 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED, true> :
 
     /// Get the index of the first key that is not less than than a provided key.
     /// @param[in] key          The key that should be inserted.
-    /// @param[in] indirect     If false (default), return the index of the key in the keys array, otherwise return the index i such that keys[indices[i]] == key.
+    /// @tparam indirect        If false (default), return the index of the key in the keys array, otherwise return the index i such that keys[indices[i]] == key.
     /// @return                 The index of the first key that is not less than the provided key and boolean indicating if the key is equal.
-    std::pair<uint32_t, bool> lower_bound(const KeyT &key, bool indirect=false) {
+    template<bool indirect = false>
+    std::pair<uint32_t, bool> lower_bound(const KeyT &key) {
         if (Node::is_leaf() && Node::count==0) return {0u, false}; // no keys
         
         ComparatorT less;
@@ -662,7 +663,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED, true> :
     /// @param[in] value        The value that should be inserted.
     void insert(const KeyT &key, const ValueT &value) {
         if (Node::count == kCapacity) throw std::runtime_error("Not enough space!");
-        auto [index, found] = lower_bound(key, true);
+        auto [index, found] = lower_bound<true>(key);
         if (found) {
             values[indices[index]] = value;
             return;
@@ -679,10 +680,10 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED, true> :
     /// Erase a key.
     bool erase(const KeyT &key) {
         // try to find key
-        auto [index, found] = lower_bound(key, true);
+        auto [index, found] = lower_bound<true>(key);
         if (!found) return false; // key not found
         // find i such that indices[i] == Node::count-1
-        auto [index_last, found_last] = lower_bound(keys[Node::count-1], true);
+        auto [index_last, found_last] = lower_bound<true>(keys[Node::count-1]);
         assert(found_last);
         // relink indices 
         keys[indices[index]] = keys[Node::count-1];
@@ -742,8 +743,8 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED, true> :
     template<typename Function>
     void for_each(Function &f, KeyT lower_bound = kNegInf, KeyT upper_bound = kInf) {
         // circumvent calls to lower_bound if possible
-        auto start = lower_bound == kNegInf ? 0u : this->lower_bound(lower_bound, true).first;
-        auto [end, include_end] = upper_bound == kInf ? std::make_pair(Node::count, false) : this->lower_bound(upper_bound, true);
+        auto start = lower_bound == kNegInf ? 0u : this->lower_bound<true>(lower_bound).first;
+        auto [end, include_end] = upper_bound == kInf ? std::make_pair(static_cast<uint32_t>(Node::count), false) : this->lower_bound<true>(upper_bound);
         end = include_end ? end+1u : end;
         for (uint16_t i=start; i<end; ++i) {
             f(keys[indices[i]], values[indices[i]]);
