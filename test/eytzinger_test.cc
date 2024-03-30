@@ -16,7 +16,7 @@ using Swip = guidedresearch::Swip;
 namespace {
 
 TEST(EytzingerTest, BlockIterator) {
-    using Iterator = guidedresearch::BlockIterator<64/sizeof(KeyT)>;
+    using Iterator = guidedresearch::EytzingerIterator<64/sizeof(KeyT)>;
     auto it = Iterator::begin(20);
     ASSERT_EQ(*it, 16);
     std::vector<uint32_t> expected = {16,17,18,19,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15 };
@@ -42,7 +42,7 @@ TEST(EytzingerTest, BlockIterator) {
 }
 
 TEST(EytzingerTest, InOrderIterator) {
-    using Iterator = guidedresearch::EytzingerIterator;
+    using Iterator = guidedresearch::EytzingerIterator<1u>;
     auto it = Iterator::begin(12);
     ASSERT_EQ(*it, 8);
     std::vector<uint32_t> expected = {8, 4, 9, 2, 10, 5, 11, 1, 6, 3, 7};

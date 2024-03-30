@@ -68,9 +68,7 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
             // recover index
             i >>= std::countr_one(i)+1;
 
-            return i ? // check if last key is less than key
-                std::make_pair(i, keys[i] == target) :
-                std::make_pair(0u, false); 
+            return std::make_pair(i, keys[i] == target);
         }
         else if constexpr (layout == NodeLayout::EYTZINGER_SIMD) {
             // explained at https://en.algorithmica.org/hpc/data-structures/s-tree/
@@ -104,17 +102,12 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
                 #else
                 for (; j<B && less(keys[i*B+j], target); ++j);
                 #endif
-                if (j < B) {
-                    // save descent to the left
-                    k = i*B+j;
-                }
+                k = j < B ? i*B+j : k; // save descent to the left
             }
 
-            return k ? // k==0 means all keys are less than target
-                std::make_pair(k, keys[k] == target) :
-                std::make_pair(0u, false); 
+            return std::make_pair(k, keys[k] == target);
         }
-        else if constexpr (layout == NodeLayout::SORTED) {
+        else if constexpr (layout == NodeLayout::ORDERED) {
             // explained at https://en.algorithmica.org/hpc/data-structures/binary-search/
             if (Node::count <= 1) return {0u, false}; // no keys
             
@@ -131,7 +124,7 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
                 std::make_pair(0u, false) : // return index one after last key
                 std::make_pair(i, keys[i] == target);   
         }
-        else return std::make_pair(0u, false);
+        else __builtin_unreachable();
     }
 
     /// Insert a key.
@@ -161,7 +154,7 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
         // in_order(i) > in_order(j))
 
         Iterator lead(Node::count, Node::count+1);
-        Iterator lag = lead;
+        Iterator lag(lead);
         ComparatorT less;
         bool forward;
         // determine if we should go forward or backward in in-order traversal
@@ -240,7 +233,7 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
             }
         }
         --Node::count;
-        if (Node::count) keys[Node::count] = std::numeric_limits<KeyT>::min();
+        if (Node::count) keys[Node::count] = kNegInf;
     }
 
     /// Split the node.
@@ -263,7 +256,7 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
         assert(right_it == Iterator::rend(right_node_count));
         
         auto separator = keys[*old_it];
-        keys[*old_it] = std::numeric_limits<KeyT>::min();
+        keys[*old_it] = kNegInf;
         auto separator_swip = children[*old_it];
         --old_it;
         for (auto i=0; i<left_node_count-1; ++i, --old_it, --left_it) {
@@ -274,7 +267,7 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
         assert(old_it == Iterator::rend(Node::count));
         // set freed keys to maximum
         for (auto i=left_node_count; i<Node::count; ++i) {
-            keys[i] = std::numeric_limits<KeyT>::min();
+            keys[i] = kNegInf;
         }
         children[0] = separator_swip;
         Node::count = left_node_count;
@@ -385,7 +378,7 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
                 left.children[*new_left_it] = left.children[*old_left_it];
             }
             for (unsigned i=left.count-to_shift; i<left.count; ++i) {
-                left.keys[i] = std::numeric_limits<KeyT>::min();
+                left.keys[i] = kNegInf;
             }
             assert(old_left_it == Iterator::rend(left.count));
             assert(new_left_it == Iterator::rend(left.count-to_shift));
@@ -424,7 +417,7 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
                 right.children[*new_right_it] = right.children[*old_right_it];
             }
             for (unsigned i=right.count-to_shift; i<right.count; ++i) {
-                right.keys[i] = std::numeric_limits<KeyT>::min();
+                right.keys[i] = kNegInf;
             }
             assert(old_right_it == Iterator::end(right.count));
             assert(new_right_it == Iterator::end(right.count-to_shift));
@@ -438,7 +431,7 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
     void init() {
         assert((sizeof(keys)/sizeof(KeyT))%8==0);
         for (auto i=0u; i<sizeof(keys)/sizeof(KeyT); ++i) {
-            keys[i] = std::numeric_limits<KeyT>::min();
+            keys[i] = kNegInf;
         }
     }
 
@@ -533,15 +526,12 @@ struct InnerNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED> : publ
         // for example, erase(1)
         // BEFORE: keys = [1, 3, 4, 9], children = [8, 3, 40, 13, 7], count = 5
         // AFTER: keys = [1, 4, 9, 9], children = [8, 3, 13, 7, 7], count = 4
-        keys[index] = keys[index+1];
-        ++index;
-        assert(Node::count > 0);
-        if (index < Node::count-1u) {
+        assert(Node::count > 1u);
+        if (index < Node::count-2u) {
             for (uint32_t i=index; i+2u<Node::count; ++i) {
                 keys[i] = keys[i+1];
-                children[i] = children[i+1];
+                children[i+1] = children[i+2];
             }
-            children[Node::count-2] = children[Node::count-1];
         }
         --Node::count;
     }

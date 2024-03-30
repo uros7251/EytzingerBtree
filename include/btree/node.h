@@ -15,7 +15,8 @@ namespace guidedresearch {
 enum class NodeLayout {
     SORTED,
     EYTZINGER,
-    EYTZINGER_SIMD
+    EYTZINGER_SIMD,
+    ORDERED     // also sorted, but using iterators for updates
 };
 
 /// @brief Picks iterator based on node layout
@@ -24,9 +25,10 @@ enum class NodeLayout {
 template <NodeLayout layout, typename KeyT>
 consteval auto IteratorPicker() {
     if constexpr (layout == NodeLayout::EYTZINGER) {
-        return std::type_identity<EytzingerIterator>{};
+        return std::type_identity<EytzingerIterator<1u>>{};
     } else if constexpr (layout == NodeLayout::EYTZINGER_SIMD) {
-        return std::type_identity<BlockIterator<CACHELINE/sizeof(KeyT)>>{};
+        //return std::type_identity<StaticBlockIterator<1u<<13, CACHELINE/sizeof(KeyT)>>{};
+        return std::type_identity<EytzingerIterator<CACHELINE/sizeof(KeyT)>>{};
     } else {
         return std::type_identity<OrderedIterator>{};
     }

@@ -63,7 +63,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, false> : public gui
             ComparatorT less;
             uint32_t i=1;
             while (i <= Node::count) {
-                //__builtin_prefetch(&keys[(CACHELINE/sizeof(KeyT))*i]);
+                __builtin_prefetch(&keys[(CACHELINE/sizeof(KeyT))*i]);
                 i = 2*i + less(keys[i], target);
             }
 
@@ -105,34 +105,31 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, false> : public gui
                 #else
                 for (; j<B && less(keys[i*B+j], target); ++j);
                 #endif
-                if (j < B) {
-                    // save descent to the left
-                    k = i*B+j;
-                }
+                k = j < B ? i*B+j : k; // save descent to the left
             }
 
             return std::make_pair(k, keys[k] == target);
         }
-        else if constexpr (layout == NodeLayout::SORTED) {
+        else if constexpr (layout == NodeLayout::ORDERED) {
             // explained at https://en.algorithmica.org/hpc/data-structures/binary-search/
             if (Node::count==0) return {0u, false}; // no keys
         
             ComparatorT less;
-            uint32_t i=0, n = Node::count;
+            uint32_t i=1, n = Node::count;
             // branchless binary search
             while (n>1) {
                 auto half = n/2;
                 n -= half; // ceil(n/2)
-                // __builtin_prefetch(&keys[i+n/2-1]); // prefetch left
-                // __builtin_prefetch(&keys[i+half+n/2-1]); // prefetch right
+                __builtin_prefetch(&keys[i+n/2-1]); // prefetch left
+                __builtin_prefetch(&keys[i+half+n/2-1]); // prefetch right
                 i += less(keys[i+half-1], target) * half; // hopefully compiler translates this to cmov
             }
 
-            return (i==Node::count-1u && less(keys[i], target)) ? // check if last key is less than key
+            return (i==Node::count && less(keys[i], target)) ? // check if last key is less than key
                 std::make_pair(0u, false) : // return index one after last key
                 std::make_pair(i, keys[i] == target);   
         }
-        else return std::make_pair(0u, false);
+        else __builtin_unreachable();
     }
 
     /// Insert a key.
@@ -171,10 +168,11 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, false> : public gui
         ComparatorT less;
         bool forward;
         // determine if we should go forward or backward in in-order traversal
-        if (lead == Iterator::rbegin(Node::count+1)) forward = false;
-        else if (lead == Iterator::begin(Node::count+1)) forward = true;
+        if (!index || lead == Iterator::begin(Node::count+1)) forward = true;
+        else if (lead == Iterator::rbegin(Node::count+1)) forward = false;
         else {
             ++lead;
+            if (*lead == index) goto end; // we insert key into new slot at index Node::count
             if (less(keys[*lead], key)) {
                 forward = true;
                 keys[*lag] = keys[*lead];
@@ -189,18 +187,19 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, false> : public gui
         assert(lag == lead);
         if (forward) {
             ++lead;
-            for (auto end = Iterator::end(Node::count+1); lead != end && less(keys[*lead], key); lag=lead, ++lead) {
+            for (; *lead != index; lag=lead, ++lead) {
                 keys[*lag] = keys[*lead];
                 values[*lag] = values[*lead];
             }
         }
         else {
             --lead;
-            for (auto end = Iterator::rend(Node::count+1); lead != end && less(key, keys[*lead]); lag=lead, --lead) {
+            for (; *lag != index; lag=lead, --lead) {
                 keys[*lag] = keys[*lead];
                 values[*lag] = values[*lead];
             }
         }
+        end:
         keys[*lag] = key;
         values[*lag] = value;
     }
@@ -234,7 +233,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, false> : public gui
                 values[*lag] = values[*lead];
             }
         }
-        keys[Node::count] = std::numeric_limits<KeyT>::min();
+        keys[Node::count] = kNegInf;
         --Node::count;
         return true;
     }
@@ -265,7 +264,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, false> : public gui
         assert(left_it == Iterator::rend(left_node_count+1u));
         assert(old_it == Iterator::rend(Node::count+1u));
         for (auto i=left_node_count+1; i<=Node::count; ++i) {
-            keys[i] = std::numeric_limits<KeyT>::min();
+            keys[i] = kNegInf;
         }
         Node::count = left_node_count;
         new_node->count = right_node_count;
@@ -304,7 +303,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, false> : public gui
         Iterator it = 
             lower_bound == kNegInf ? Iterator::begin(Node::count+1) : // needed because lower_bound implementation assumes all keys are > kNegInf
             Iterator(this->lower_bound(lower_bound).first, Node::count+1);
-        auto [end, include_end] = lower_bound == kInf ? std::make_pair(0u, false) : this->lower_bound(upper_bound);
+        auto [end, include_end] = upper_bound == kInf ? std::make_pair(0u, false) : this->lower_bound(upper_bound);
         for (; *it != end; ++it) {
             f(keys[*it], values[*it]);
         }
@@ -359,7 +358,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, false> : public gui
                 left.values[*new_left_it] = left.values[*old_left_it];
             }
             for (unsigned i=left.count-to_shift+1; i<=left.count; ++i) {
-                left.keys[i] = std::numeric_limits<KeyT>::min();
+                left.keys[i] = kNegInf;
             }
             assert(old_left_it == Iterator::rend(left.count+1));
             assert(new_left_it == Iterator::rend(left.count-to_shift+1));
@@ -395,7 +394,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, false> : public gui
                 right.values[*new_right_it] = right.values[*old_right_it];
             }
             for (unsigned i=right.count-to_shift+1; i<=right.count; ++i) {
-                right.keys[i] = std::numeric_limits<KeyT>::min();
+                right.keys[i] = kNegInf;
             }
             assert(old_right_it == Iterator::end(right.count+1));
             assert(new_right_it == Iterator::end(right.count-to_shift+1));
@@ -410,7 +409,7 @@ private:
     void init() {
         assert((sizeof(keys)/sizeof(KeyT))%8==0);
         for (auto i=0u; i<sizeof(keys)/sizeof(KeyT); ++i) {
-            keys[i] = std::numeric_limits<KeyT>::min();
+            keys[i] = kNegInf;
         }
     }
 
@@ -454,25 +453,26 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED, false> 
     bool merge_needed() const { return Node::count < max_values()/2; } 
 
     /// Get the index of the first key that is not less than than a provided key.
-    /// @param[in] key          The key that should be inserted.
+    /// @param[in] target       The key to look for.
     /// @return                 The index of the first key that is not less than the provided key and boolean indicating if the key is equal.
-    std::pair<uint32_t, bool> lower_bound(const KeyT &key) {
+    std::pair<uint32_t, bool> lower_bound(const KeyT &target) {
         if (Node::count==0) return {0u, false}; // no keys
         
         ComparatorT less;
-        uint32_t i=0, n = Node::count;
+
+        uint32_t i=0, n=Node::count;
         // branchless binary search
         while (n>1) {
             auto half = n/2;
             n -= half; // ceil(n/2)
             // __builtin_prefetch(&keys[i+n/2-1]); // prefetch left
             // __builtin_prefetch(&keys[i+half+n/2-1]); // prefetch right
-            i += less(keys[i+half-1], key) * half; // hopefully compiler translates this to cmov
+            i += less(keys[i+half-1], target) * half; // hopefully compiler translates this to cmov
         }
 
-        return (i==Node::count-1u && less(keys[i], key)) ? // check if last key is less than key
+        return (i==Node::count-1u && less(keys[i], target)) ? // check if last key is less than key
             std::make_pair(static_cast<uint32_t>(Node::count), false) : // return index one after last key
-            std::make_pair(i, keys[i] == key); 
+            std::make_pair(i, keys[i] == target);
     }
 
     /// Insert a key.
