@@ -7,7 +7,7 @@
 #include "utils/load.h"
 
 using BufferManager = guidedresearch::BufferManager;
-using KeyT = int32_t;
+using KeyT = int64_t;
 using ValueT = int64_t;
 
 uint64_t rdtsc() {
@@ -86,7 +86,7 @@ void layout_comparison(guidedresearch::IntLoad<KeyT>& load) {
             eytzinger_insert, eytzinger_lookup, eytzinger_range_scan, eytzinger_erase,
             simd_insert, simd_lookup, simd_range_scan, simd_erase;
     {
-        using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, PageSize, guidedresearch::NodeLayout::SORTED>;
+        using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, PageSize, guidedresearch::NodeLayout::SORTED, guidedresearch::NodeLayout::SORTED>;
         std::tie(ref_insert, ref_lookup, ref_range_scan, ref_erase) = bench<BTree>(load);
         std::cout << load.name() << "|" << PageSize << "|Standard|" << ref_insert << "|" << ref_lookup << "|" << ref_range_scan << "|" << ref_erase << "|\n";
     }
@@ -190,8 +190,8 @@ void load_comparison() {
 
 int main() {
     load_comparison();
-    //guidedresearch::UniformLoad<KeyT> load(1<<20);
-    //layout_comparison(load);
+    //guidedresearch::UniformLoad<KeyT> load(1<<22);
+    //layout_comparison<1u<<14>(load);
     //inner_node_comparison(load);
     
     return 0;

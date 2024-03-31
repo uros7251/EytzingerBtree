@@ -22,12 +22,12 @@ enum class NodeLayout {
 /// @brief Picks iterator based on node layout
 /// @tparam layout 
 /// @return Iterator Type
-template <NodeLayout layout, typename KeyT>
+template <NodeLayout layout, typename KeyT, uint16_t Cap = 0>
 consteval auto IteratorPicker() {
     if constexpr (layout == NodeLayout::EYTZINGER) {
         return std::type_identity<EytzingerIterator<1u>>{};
     } else if constexpr (layout == NodeLayout::EYTZINGER_SIMD) {
-        //return std::type_identity<StaticBlockIterator<1u<<13, CACHELINE/sizeof(KeyT)>>{};
+        // return std::type_identity<StaticBlockIterator<Cap, CACHELINE/sizeof(KeyT)>>{};
         return std::type_identity<EytzingerIterator<CACHELINE/sizeof(KeyT)>>{};
     } else {
         return std::type_identity<OrderedIterator>{};

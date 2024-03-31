@@ -16,7 +16,7 @@ using BufferFrame = guidedresearch::BufferFrame;
 using BufferManager = guidedresearch::BufferManager;
 using AlignedVector = guidedresearch::AlignedVector;
 using Defer = guidedresearch::Defer;
-using KeyT = int32_t;
+using KeyT = int64_t;
 using ValueT = int64_t;
 using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, PageSize, guidedresearch::NodeLayout::EYTZINGER_SIMD, guidedresearch::NodeLayout::EYTZINGER_SIMD>;
 

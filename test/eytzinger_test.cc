@@ -8,18 +8,19 @@
 using BufferFrame = guidedresearch::BufferFrame;
 using BufferManager = guidedresearch::BufferManager;
 using AlignedVector = guidedresearch::AlignedVector;
-using KeyT = int32_t;
+using KeyT = int64_t;
 using ValueT = int64_t;
 using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, PageSize, guidedresearch::NodeLayout::EYTZINGER_SIMD>;
 using Swip = guidedresearch::Swip;
 
 namespace {
 
-TEST(EytzingerTest, BlockIterator) {
-    using Iterator = guidedresearch::EytzingerIterator<64/sizeof(KeyT)>;
+TEST(EytzingerTest, StaticBlockIterator) {
+    using Iterator = guidedresearch::StaticBlockIterator<64, 64/sizeof(KeyT)>;
+
     auto it = Iterator::begin(20);
-    ASSERT_EQ(*it, 16);
-    std::vector<uint32_t> expected = {16,17,18,19,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15 };
+    ASSERT_EQ(*it, 8);
+    std::vector<uint32_t> expected = {8,9,10,11,12,13,14,15,1,16,17,18,19,2,3,4,5,6,7};
     for (auto i = 0u; i < expected.size(); ++i) {
         ASSERT_EQ(*it, expected[i]);
         ++it;
@@ -27,7 +28,33 @@ TEST(EytzingerTest, BlockIterator) {
     ASSERT_TRUE(it == Iterator::end(20));
 
     it = Iterator::rbegin(20);
-    ASSERT_EQ(*it, 15);
+    ASSERT_EQ(*it, 7);
+    for (auto i = expected.size(); i > 0;) {
+        ASSERT_EQ(*it, expected[--i]);
+        --it;
+    }
+    ASSERT_TRUE(it == Iterator::rend(20));
+
+    it = Iterator::begin(1);
+    ASSERT_TRUE(it == Iterator::end(1));
+
+    it = Iterator::rbegin(1);
+    ASSERT_TRUE(it == Iterator::rend(1));
+}
+
+TEST(EytzingerTest, BlockIterator) {
+    using Iterator = guidedresearch::EytzingerIterator<64/sizeof(KeyT)>;
+    auto it = Iterator::begin(20);
+    ASSERT_EQ(*it, 8);
+    std::vector<uint32_t> expected = {8,9,10,11,12,13,14,15,1,16,17,18,19,2,3,4,5,6,7};
+    for (auto i = 0u; i < expected.size(); ++i) {
+        ASSERT_EQ(*it, expected[i]);
+        ++it;
+    }
+    ASSERT_TRUE(it == Iterator::end(20));
+
+    it = Iterator::rbegin(20);
+    ASSERT_EQ(*it, 7);
     for (auto i = expected.size(); i > 0;) {
         ASSERT_EQ(*it, expected[--i]);
         --it;

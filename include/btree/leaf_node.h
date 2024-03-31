@@ -14,7 +14,6 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, false> : public gui
     static_assert(PageSize % CACHELINE == 0); // PageSize should be multiple of cacheline size
     
     using Node = guidedresearch::Node<KeyT, ValueT, ComparatorT, PageSize>;
-    using Iterator = typename decltype(IteratorPicker<layout, KeyT>())::type;
     
     // NOTE: two functions below assume cacheline is 64B!
     static consteval uint32_t GetKeysOffset() {
@@ -40,6 +39,9 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, false> : public gui
     ValueT values[LeafNode::max_values()+1]; 
     /// The keys. Stored in index range [1, Node::count]. Aligned to cache line size (64 bytes)
     alignas(64) KeyT keys[(PageSize-GetKeysOffset())/sizeof(KeyT)]; // we leave first empty 
+
+    
+    using Iterator = typename decltype(IteratorPicker<layout, KeyT, kCapacity+1>())::type;
 
     /// Constructor.
     LeafNode() : Node(0, 0) { init(); }
@@ -74,16 +76,16 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, false> : public gui
         }
         else if constexpr (layout == NodeLayout::EYTZINGER_SIMD) {
             // explained at https://en.algorithmica.org/hpc/data-structures/s-tree/
-            static_assert(std::is_same_v<KeyT, int32_t>); // SIMD support provided only for int32_t
+            static_assert(std::is_same_v<KeyT, int64_t>); // SIMD support provided only for int64_t (can be extended to other integer types)
 
             if (Node::count == 0u) return {0u, false}; // no keys
 
             constexpr auto B = CACHELINE/sizeof(KeyT); // block size
             
             #if defined(__AVX512F__) && defined(__AVX512VL__)
-            __m512i key_vec = _mm512_set1_epi32(target);
+            __m512i key_vec = _mm512_set1_epi64(target);
             #elif defined(__AVX__) && defined(__AVX2__)
-            __m256i key_vec = _mm256_set1_epi32(target);
+            __m256i key_vec = _mm256_set1_epi64x(target);
             #else
             ComparatorT less;
             #endif
@@ -97,10 +99,10 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, false> : public gui
                 // comparison
                 #if defined(__AVX512F__) && defined(__AVX512VL__)
                 __m512i y_vec = _mm512_load_si512(&keys[i*B]);
-                mask = _mm512_cmplt_epi32_mask(y_vec, key_vec); // we assume target > MIN_INT32, replace '=' with '|=' for any target
+                mask = _mm512_cmplt_epi64_mask(y_vec, key_vec); // we assume target > kNegInf, replace '=' with '|=' for any target
                 j = std::countr_one(mask);
                 #elif defined(__AVX__) && defined(__AVX2__)
-                mask = less256(key_vec, &keys[i*B]) + (less256(key_vec, &keys[i*B+8]) << 8);
+                mask = less256(key_vec, &keys[i*B]) + (less256(key_vec, &keys[i*B+4]) << 4);
                 j = std::countr_one(mask);
                 #else
                 for (; j<B && less(keys[i*B+j], target); ++j);
@@ -414,10 +416,10 @@ private:
     }
 
     #if !defined(__AVX512F__) && defined(__AVX__) && defined(__AVX2__)
-    static int less256(__m256i x_vec, int* y_ptr) {
-        __m256i y_vec = _mm256_load_si256((__m256i*) y_ptr); // load 8 sorted elements
-        __m256i mask = _mm256_cmpgt_epi32(x_vec, y_vec); // compare against the key
-        return _mm256_movemask_ps((__m256) mask);    // extract the 8-bit mask
+    static int less256(__m256i x_vec, KeyT* y_ptr) {
+        __m256i y_vec = _mm256_load_si256((__m256i*) y_ptr); // load 4 sorted elements
+        __m256i mask = _mm256_cmpgt_epi64(x_vec, y_vec); // compare against the key
+        return _mm256_movemask_pd((__m256d) mask);    // extract the 4-bit mask
     }
     #endif
 };
