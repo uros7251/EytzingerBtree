@@ -18,14 +18,14 @@ using AlignedVector = guidedresearch::AlignedVector;
 using Defer = guidedresearch::Defer;
 using KeyT = int64_t;
 using ValueT = int64_t;
-using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, PageSize, guidedresearch::NodeLayout::EYTZINGER_SIMD, guidedresearch::NodeLayout::EYTZINGER_SIMD>;
+using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, PageSize, guidedresearch::NodeLayout::EYTZINGER_SIMD, guidedresearch::NodeLayout::EYTZINGER_SIMD, true>;
 
 namespace {
 
 // NOLINTNEXTLINE
 TEST(BTreeTest, Capacity) {
     {
-        using BTree = guidedresearch::BTree<int32_t, int64_t, std::less<int32_t>, 1u << 10, guidedresearch::NodeLayout::EYTZINGER>;
+        using BTree = guidedresearch::BTree<int64_t, int64_t, std::less<int32_t>, 1u << 10, guidedresearch::NodeLayout::EYTZINGER, guidedresearch::NodeLayout::EYTZINGER, true>;
         // Here, 42 is not the answer...
         ASSERT_NE(BTree::InnerNode::kCapacity, 42);
         ASSERT_NE(BTree::LeafNode::kCapacity, 42);
@@ -50,6 +50,8 @@ TEST(BTreeTest, Capacity) {
 
 // NOLINTNEXTLINE
 TEST(BTreeTest, LeafNodeInsert) {
+    static_assert(sizeof(BTree::LeafNode) <= PageSize);
+
     AlignedVector buffer;
     buffer.resize(PageSize, 1024);
     auto node = new (buffer.data()) BTree::LeafNode();

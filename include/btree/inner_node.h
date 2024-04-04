@@ -57,7 +57,7 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
     std::pair<uint32_t, bool> lower_bound(const KeyT &target) {
         if constexpr (layout == NodeLayout::EYTZINGER) {
             // explained at https://en.algorithmica.org/hpc/data-structures/binary-search/
-            if (Node::count <= 1) return {0u, false}; // no keys
+            // if (Node::count <= 1) return {0u, false}; // no keys
             
             ComparatorT less;
             uint32_t i=1;
@@ -75,7 +75,7 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
             // explained at https://en.algorithmica.org/hpc/data-structures/s-tree/
             static_assert(std::is_same_v<KeyT, int64_t>); // SIMD support provided only for int64_t (can be extended to other integer types)
 
-            if (Node::count <= 1) return {0u, false}; // no keys
+            // if (Node::count <= 1) return {0u, false}; // no keys
 
             constexpr auto B = CACHELINE/sizeof(KeyT); // block size
             
@@ -98,12 +98,16 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
                 mask = _mm512_cmplt_epi64_mask(y_vec, key_vec); // we assume target > kNegInf, replace '=' with '|=' for any target
                 j = std::countr_one(mask);
                 #elif defined(__AVX__) && defined(__AVX2__)
-                mask = less256(key_vec, &keys[i*B]) + (less256(key_vec, &keys[i*B+4]) << 4);
+                mask = less256(key_vec, &keys[i*B]) + (less256(key_vec, &keys[i*B+B/2]) << (B/2));
                 j = std::countr_one(mask);
                 #else
                 for (; j<B && less(keys[i*B+j], target); ++j);
                 #endif
                 k = j < B ? i*B+j : k; // save descent to the left
+                // IMPORTANT NOTE: we pad key array with kNegInf to simplify the condition for saving the last descent to the left.
+                // The alternative is to pad the array with kInf, but then we would also have to check that i*B+j < Node::count
+                // because it might just be the case that we are in the last node which is partially filled and we are comparing against
+                // padded infinities
             }
 
             return std::make_pair(k, keys[k] == target);
@@ -438,9 +442,9 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
 
     #if !defined(__AVX512F__) && defined(__AVX__) && defined(__AVX2__)
     static int less256(__m256i x_vec, KeyT* y_ptr) {
-        __m256i y_vec = _mm256_load_si256((__m256i*) y_ptr); // load 4 sorted elements
+        __m256i y_vec = _mm256_load_si256((__m256i*) y_ptr); // load B sorted elements
         __m256i mask = _mm256_cmpgt_epi64(x_vec, y_vec); // compare against the key
-        return _mm256_movemask_pd((__m256d) mask);    // extract the 4-bit mask
+        return _mm256_movemask_pd((__m256d) mask);    // extract the B/2-bit mask
     }
     #endif
 };

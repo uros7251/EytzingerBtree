@@ -15,12 +15,12 @@ namespace guidedresearch {
 // by prof. Neumann's article https://databasearchitects.blogspot.com/2022/06/btreeoperations.html
 //------------------------------------------------------------------------------------------------
 
-template<typename KeyT, typename ValueT, typename ComparatorT, size_t PageSize, NodeLayout inner_layout = NodeLayout::SORTED, NodeLayout leaf_layout = NodeLayout::SORTED>
+template<typename KeyT, typename ValueT, typename ComparatorT, size_t PageSize, NodeLayout inner_layout = NodeLayout::SORTED, NodeLayout leaf_layout = NodeLayout::SORTED, bool FastInserts = false>
 struct BTree : public Segment {
     using Node = guidedresearch::Node<KeyT, ValueT, ComparatorT, PageSize>;
     using InnerNode = guidedresearch::InnerNode<KeyT, ValueT, ComparatorT, PageSize, inner_layout>;
     // using leaf node designed for fast insertions
-    using LeafNode = guidedresearch::LeafNode<KeyT, ValueT, ComparatorT, PageSize, leaf_layout, false>;
+    using LeafNode = guidedresearch::LeafNode<KeyT, ValueT, ComparatorT, PageSize, leaf_layout, FastInserts>;
 
     constexpr static size_t kPageSize = PageSize; // expose page size to the outside
 
@@ -71,7 +71,7 @@ struct BTree : public Segment {
         auto* leaf_node = reinterpret_cast<LeafNode*>(node);
         auto [index, match] = leaf_node->lower_bound(key);
         std::optional<ValueT> result;
-        if (match) result = {leaf_node->values[index]};
+        if (match) result = {leaf_node->values[index].value};
         return result;
     }
 

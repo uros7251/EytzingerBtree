@@ -8,7 +8,13 @@
 
 using BufferManager = guidedresearch::BufferManager;
 using KeyT = int64_t;
-using ValueT = int64_t;
+
+struct ValueT {
+    static constexpr int size=4;
+    int64_t a[size];
+    ValueT() = default;
+    ValueT(int64_t a) { this->a[0]=a; }
+};
 
 uint64_t rdtsc() {
   unsigned int lo, hi;
@@ -43,7 +49,7 @@ std::tuple<uint64_t,uint64_t, uint64_t, uint64_t> bench(guidedresearch::IntLoad<
     for (auto i = 0ul; i < m; ++i) {
         auto key = load.lookup(i);
         auto result = tree.lookup(key);
-        if (result) checksum ^= *result;
+        if (result) checksum ^= (*result).a[0];
         else {
             std::cerr << "lookup failed for key " << key << "!\n";
             return {0, 0, 0, 0};
@@ -55,14 +61,14 @@ std::tuple<uint64_t,uint64_t, uint64_t, uint64_t> bench(guidedresearch::IntLoad<
     duration = end-start;
     auto lookup_time = duration/m;
 
-    ValueT total = 0;
+    int64_t total = 0;
     KeyT min = n/64, max = min;
-    auto num_iters = n/100;
+    auto num_iters = n>>10; // n/1024
     start = rdtsc();
     for (auto i=0u; i<num_iters; ++i) {
         max += n/(2*num_iters);
         tree.traverse([&total]([[maybe_unused]] const KeyT &k, const ValueT &v) {
-            total += v;
+            total += v.a[0];
         }, min, max);
     }
     end = rdtsc();
@@ -82,38 +88,74 @@ std::tuple<uint64_t,uint64_t, uint64_t, uint64_t> bench(guidedresearch::IntLoad<
 
 template<size_t PageSize = 4096>
 void layout_comparison(guidedresearch::IntLoad<KeyT>& load) {
-    uint64_t ref_insert, ref_lookup, ref_range_scan, ref_erase,
-            eytzinger_insert, eytzinger_lookup, eytzinger_range_scan, eytzinger_erase,
-            simd_insert, simd_lookup, simd_range_scan, simd_erase;
+    uint64_t ref_insert, ref_lookup, ref_range_scan, ref_erase;
+    uint64_t ref_insert_fast_insert, ref_lookup_fast_insert, ref_range_scan_fast_insert, ref_erase_fast_insert;
     {
         using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, PageSize, guidedresearch::NodeLayout::SORTED, guidedresearch::NodeLayout::SORTED>;
+        auto label = "Standard";
         std::tie(ref_insert, ref_lookup, ref_range_scan, ref_erase) = bench<BTree>(load);
-        std::cout << load.name() << "|" << PageSize << "|Standard|" << ref_insert << "|" << ref_lookup << "|" << ref_range_scan << "|" << ref_erase << "|\n";
+        std::cout << load.name() << "|" << PageSize << "|" << label << "|" << ref_insert << "|" << ref_lookup << "|" << ref_range_scan << "|" << ref_erase << "|\n";
     }
     {
-        using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, PageSize, guidedresearch::NodeLayout::EYTZINGER, guidedresearch::NodeLayout::EYTZINGER>;
-        std::tie(eytzinger_insert, eytzinger_lookup, eytzinger_range_scan, eytzinger_erase) = bench<BTree>(load);
-        std::cout << load.name() << "|" << PageSize << "|Eytzinger|" << eytzinger_insert << "|" << eytzinger_lookup << "|" << eytzinger_range_scan << "|" << eytzinger_erase << "|\n";
+        using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, PageSize, guidedresearch::NodeLayout::SORTED, guidedresearch::NodeLayout::SORTED, true>;
+        auto label = "Standard Fast inserts";
+        std::tie(ref_insert_fast_insert, ref_lookup_fast_insert, ref_range_scan_fast_insert, ref_erase_fast_insert) = bench<BTree>(load);
+        std::cout << load.name() << "|" << PageSize << "|" << label << "|" << ref_insert_fast_insert << "|" << ref_lookup_fast_insert << "|" << ref_range_scan_fast_insert << "|" << ref_erase_fast_insert << "|\n";
+        std::cerr << label << " speedup:\n"
+            << "insert: " << static_cast<double>(ref_insert)/ref_insert_fast_insert
+            << "x, lookup: " << static_cast<double>(ref_lookup)/ref_lookup_fast_insert
+            << "x, range scan: " << static_cast<double>(ref_range_scan)/ref_range_scan_fast_insert
+            << "x, erase: " << static_cast<double>(ref_erase)/ref_erase_fast_insert
+            << "\n";
     }
     {
-        using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, PageSize, guidedresearch::NodeLayout::EYTZINGER_SIMD, guidedresearch::NodeLayout::EYTZINGER_SIMD>;
-        std::tie(simd_insert, simd_lookup, simd_range_scan, simd_erase) = bench<BTree>(load);
-        std::cout << load.name() << "|" << PageSize << "|Eytzinger+SIMD|" << simd_insert << "|" << simd_lookup << "|" << simd_range_scan << "|" << simd_erase << "|\n";
+        using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, PageSize, guidedresearch::NodeLayout::EYTZINGER, guidedresearch::NodeLayout::EYTZINGER, false>;
+        auto label = "Eytzinger";
+        auto [insert, lookup, range_scan, erase] = bench<BTree>(load);
+        std::cout << load.name() << "|" << PageSize << "|" << label << "|" << insert << "|" << lookup << "|" << range_scan << "|" << erase << "|\n";
+        std::cerr << label << " speedup:\n"
+            << "insert: " << static_cast<double>(ref_insert_fast_insert)/insert
+            << "x, lookup: " << static_cast<double>(ref_lookup)/lookup
+            << "x, range scan: " << static_cast<double>(ref_range_scan)/range_scan
+            << "x, erase: " << static_cast<double>(ref_erase)/erase
+            << "\n";
     }
-
-    std::cout << "Eytzinger speedup:\n";
-    std::cout << "insert: " << static_cast<double>(ref_insert)/eytzinger_insert
-            << "x, lookup: " << static_cast<double>(ref_lookup)/eytzinger_lookup
-            << "x, range scan: " << static_cast<double>(ref_range_scan)/eytzinger_range_scan
-            << "x, erase: " << static_cast<double>(ref_erase)/eytzinger_erase
+    {
+        using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, PageSize, guidedresearch::NodeLayout::EYTZINGER, guidedresearch::NodeLayout::EYTZINGER, true>;
+        auto label = "Eytzinger Fast inserts";
+        auto [insert, lookup, range_scan, erase] = bench<BTree>(load);
+        std::cout << load.name() << "|" << PageSize << "|" << label << "|" << insert << "|" << lookup << "|" << range_scan << "|" << erase << "|\n";
+        std::cerr << label << " speedup:\n"
+            << "insert: " << static_cast<double>(ref_insert_fast_insert)/insert
+            << "x, lookup: " << static_cast<double>(ref_lookup_fast_insert)/lookup
+            << "x, range scan: " << static_cast<double>(ref_range_scan_fast_insert)/range_scan
+            << "x, erase: " << static_cast<double>(ref_erase_fast_insert)/erase
             << "\n";
-
-    std::cout << "Eytzinger+SIMD speedup:\n";
-    std::cout << "insert: " << static_cast<double>(ref_insert)/simd_insert
-            << "x, lookup: " << static_cast<double>(ref_lookup)/simd_lookup
-            << "x, range scan: " << static_cast<double>(ref_range_scan)/simd_range_scan
-            << "x, erase: " << static_cast<double>(ref_erase)/simd_erase
+    }
+    {
+        using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, PageSize, guidedresearch::NodeLayout::EYTZINGER_SIMD, guidedresearch::NodeLayout::EYTZINGER_SIMD, false>;
+        auto label = "Eytzinger+SIMD";
+        auto [insert, lookup, range_scan, erase] = bench<BTree>(load);
+        std::cout << load.name() << "|" << PageSize << "|" << label << "|" << insert << "|" << lookup << "|" << range_scan << "|" << erase << "|\n";
+        std::cerr << label << " speedup:\n"
+            << "insert: " << static_cast<double>(ref_insert)/insert
+            << "x, lookup: " << static_cast<double>(ref_lookup)/lookup
+            << "x, range scan: " << static_cast<double>(ref_range_scan)/range_scan
+            << "x, erase: " << static_cast<double>(ref_erase)/erase
             << "\n";
+    }
+    {
+        using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, PageSize, guidedresearch::NodeLayout::EYTZINGER_SIMD, guidedresearch::NodeLayout::EYTZINGER_SIMD, true>;
+        auto label = "Eytzinger+SIMD Fast inserts";
+        auto [insert, lookup, range_scan, erase] = bench<BTree>(load);
+        std::cout << load.name() << "|" << PageSize << "|" << label << "|" << insert << "|" << lookup << "|" << range_scan << "|" << erase << "|\n";
+        std::cerr << label << " speedup:\n"
+            << "insert: " << static_cast<double>(ref_insert_fast_insert)/insert
+            << "x, lookup: " << static_cast<double>(ref_lookup_fast_insert)/lookup
+            << "x, range scan: " << static_cast<double>(ref_range_scan_fast_insert)/range_scan
+            << "x, erase: " << static_cast<double>(ref_erase_fast_insert)/erase
+            << "\n";
+    }
 }
 
 constexpr size_t page_sizes[] = {1024, 4096, 16384};
@@ -190,9 +232,9 @@ void load_comparison() {
 
 int main() {
     load_comparison();
-    //guidedresearch::UniformLoad<KeyT> load(1<<22);
-    //layout_comparison<1u<<14>(load);
+    //guidedresearch::UniformLoad<KeyT> load(1<<20);
+    //layout_comparison<1u<<10>(load);
     //inner_node_comparison(load);
-    
+
     return 0;
 }
