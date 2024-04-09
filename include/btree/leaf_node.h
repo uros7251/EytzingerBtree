@@ -493,8 +493,8 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, true> : public guid
     static consteval uint32_t max_keys() { return kCapacity; }
     static consteval uint32_t max_values() { return kCapacity; }
 
-    /// The indices. Value at index i corresponds to the index in values array of a value associated with a key at index i. indices[0] stores the index of the first free value slot
-    index_t indices[LeafNode::max_keys()+1];
+    /// The pointers. Value at index i corresponds to the index in values array of a value associated with a key at index i. pointers[0] stores the index of the first free value slot
+    index_t pointers[LeafNode::max_keys()+1];
     /// The keys. Stored in index range [1, Node::count]. Aligned to cache line size (64 bytes)
     alignas(CACHELINE) KeyT keys[((((max_keys()+1)*sizeof(KeyT)+CACHELINE-1)/CACHELINE)*CACHELINE)/sizeof(KeyT)]; // we leave first empty
     /// The values.
@@ -533,7 +533,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, true> : public guid
             i >>= std::countr_one(i)+1;
 
             return std::make_pair(
-                value ? indices[i] : i,
+                value ? pointers[i] : i,
                 keys[i] == target);
         }
         else if constexpr (layout == NodeLayout::EYTZINGER_SIMD) {
@@ -575,7 +575,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, true> : public guid
             }
 
             return std::make_pair(
-                value ? indices[k] : k,
+                value ? pointers[k] : k,
                 keys[k] == target);
         }
         else if constexpr (layout == NodeLayout::ORDERED) {
@@ -595,7 +595,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, true> : public guid
 
             return (i==Node::count && less(keys[i], target)) ? // check if last key is less than key
                 std::make_pair(0u, false) : // return index one after last key
-                std::make_pair(value ? indices[i] : i, keys[i] == target);
+                std::make_pair(value ? pointers[i] : i, keys[i] == target);
         }
         else __builtin_unreachable();
     }
@@ -613,10 +613,10 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, true> : public guid
         // trivial case with no keys
         if (Node::count == 0u) {
             // no keys
-            auto v_index = indices[0];
-            indices[0] = values[v_index].next; // update chain
+            auto v_index = pointers[0];
+            pointers[0] = values[v_index].next; // update chain
             keys[1] = key;
-            indices[1] = v_index;
+            pointers[1] = v_index;
             values[v_index].value = value;
             ++Node::count;
             return;
@@ -624,7 +624,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, true> : public guid
 
         auto [key_index,found] = lower_bound<false>(key);
         if (found) {
-            values[indices[key_index]].value = value;
+            values[pointers[key_index]].value = value;
             return;
         }
 
@@ -647,7 +647,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, true> : public guid
             if (less(keys[*lead], key)) {
                 forward = true;
                 keys[*lag] = keys[*lead];
-                indices[*lag] = indices[*lead];
+                pointers[*lag] = pointers[*lead];
                 lag = lead;
             }
             else {
@@ -660,21 +660,21 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, true> : public guid
             ++lead;
             for (; *lead != key_index; lag=lead, ++lead) {
                 keys[*lag] = keys[*lead];
-                indices[*lag] = indices[*lead];
+                pointers[*lag] = pointers[*lead];
             }
         }
         else {
             --lead;
             for (; *lag != key_index; lag=lead, --lead) {
                 keys[*lag] = keys[*lead];
-                indices[*lag] = indices[*lead];
+                pointers[*lag] = pointers[*lead];
             }
         }
         end:
-        auto v_index = indices[0];
-        indices[0] = values[v_index].next;
+        auto v_index = pointers[0];
+        pointers[0] = values[v_index].next;
         keys[*lag] = key;
-        indices[*lag] = v_index;
+        pointers[*lag] = v_index;
         values[v_index].value = value;
     }
 
@@ -687,8 +687,8 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, true> : public guid
         auto [key_index, found] = lower_bound<false>(key);
         if (!found) return false; // key not found
 
-        values[indices[key_index]].next = indices[0];
-        indices[0] = indices[key_index];
+        values[pointers[key_index]].next = pointers[0];
+        pointers[0] = pointers[key_index];
 
         Iterator lag(key_index, Node::count+1);
         Iterator lead = lag;
@@ -699,7 +699,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, true> : public guid
             ++lead;
             for (; *lag != Node::count; lag=lead, ++lead) {
                 keys[*lag] = keys[*lead];
-                indices[*lag] = indices[*lead];
+                pointers[*lag] = pointers[*lead];
             }
         }
         else {
@@ -707,7 +707,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, true> : public guid
             --lead;
             for (; *lag != Node::count; lag=lead, --lead) {
                 keys[*lag] = keys[*lead];
-                indices[*lag] = indices[*lead];
+                pointers[*lag] = pointers[*lead];
             }
         }
         keys[Node::count] = kNegInf;
@@ -728,20 +728,20 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, true> : public guid
         Iterator old_it = Iterator::rbegin(Node::count+1u), left_it = Iterator::rbegin(left_node_count+1u), right_it = Iterator::rbegin(right_node_count+1u);
         for (auto i=0; i<right_node_count; ++i, --old_it, --right_it) {
             new_node->keys[*right_it] = keys[*old_it];
-            new_node->indices[*right_it] = i;
-            new_node->values[i].value = values[indices[*old_it]].value;
+            new_node->pointers[*right_it] = i;
+            new_node->values[i].value = values[pointers[*old_it]].value;
             // add value slot to the chain
-            values[indices[*old_it]].next = indices[0];
-            indices[0] = indices[*old_it];
+            values[pointers[*old_it]].next = pointers[0];
+            pointers[0] = pointers[*old_it];
         }
-        new_node->indices[0] = right_node_count;
+        new_node->pointers[0] = right_node_count;
         
         assert(right_it == Iterator::rend(right_node_count+1));
         
         auto separator = keys[*old_it];
         for (auto i=0; i<left_node_count; ++i, --old_it, --left_it) {
             keys[*left_it] = keys[*old_it];
-            indices[*left_it] = indices[*old_it];
+            pointers[*left_it] = pointers[*old_it];
         }
         assert(left_it == Iterator::rend(left_node_count+1u));
         assert(old_it == Iterator::rend(Node::count+1u));
@@ -758,16 +758,16 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, true> : public guid
         // rearrange values in left node
         for (auto i=0; i<Node::count; ++i, ++left_it, ++merge_it) {
             keys[*merge_it] = keys[*left_it];
-            indices[*merge_it] = indices[*left_it];
+            pointers[*merge_it] = pointers[*left_it];
         }
         assert(left_it == Iterator::end(Node::count+1u));
         // insert values from right node
         for (auto i=0; i<other.count; ++i, ++right_it, ++merge_it) {
             keys[*merge_it] = other.keys[*right_it];
-            auto v_index = indices[0]; // save next free value slot to temporary variable
-            indices[0] = values[v_index].next; // update the next free value slot
-            indices[*merge_it] = v_index;
-            values[v_index].value = other.values[other.indices[*right_it]].value;
+            auto v_index = pointers[0]; // save next free value slot to temporary variable
+            pointers[0] = values[v_index].next; // update the next free value slot
+            pointers[*merge_it] = v_index;
+            values[v_index].value = other.values[other.pointers[*right_it]].value;
         }
         assert(right_it == Iterator::end(other.count+1u));
         // update counts
@@ -780,7 +780,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, true> : public guid
         // if possible, circumvent the iterator and directly access the keys and values
         if (lower_bound == kNegInf && upper_bound == kInf) {
             for (auto i=1u; i<=Node::count; ++i) {
-                f(keys[i], values[indices[i]].value);
+                f(keys[i], values[pointers[i]].value);
             }
             return;
         }
@@ -790,10 +790,10 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, true> : public guid
             Iterator(this->lower_bound<false>(lower_bound).first, Node::count+1);
         auto [end, include_end] = upper_bound == kInf ? std::make_pair(0u, false) : this->lower_bound<false>(upper_bound);
         for (; *it != end; ++it) {
-            f(keys[*it], values[indices[*it]].value);
+            f(keys[*it], values[pointers[*it]].value);
         }
         if (include_end) {
-            f(keys[end], values[indices[end]].value);
+            f(keys[end], values[pointers[end]].value);
         }
     }
 
@@ -812,7 +812,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, true> : public guid
         std::vector<ValueT> sorted_values;
         sorted_values.reserve(Node::count);
         for (auto it = Iterator::begin(Node::count+1u), end = Iterator::end(Node::count+1u); it != end; ++it) {
-            sorted_values.emplace_back(values[indices[*it]].value);
+            sorted_values.emplace_back(values[pointers[*it]].value);
         }
         return sorted_values;
     }
@@ -826,7 +826,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, true> : public guid
             // make space for keys and values from left node
             for (int i=0; i<right.count; ++i, --old_right_it, --new_right_it) {
                 right.keys[*new_right_it] = right.keys[*old_right_it];
-                right.indices[*new_right_it] = right.indices[*old_right_it];
+                right.pointers[*new_right_it] = right.pointers[*old_right_it];
             }
             assert(old_right_it == Iterator::rend(right.count+1));
             // insert keys and values from left node
@@ -834,13 +834,13 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, true> : public guid
                 // insert key
                 right.keys[*new_right_it] = left.keys[*old_left_it];
                 // insert value
-                auto v_index = right.indices[0];
-                right.indices[0] = right.values[v_index].next;
-                right.indices[*new_right_it] = v_index;
-                right.values[v_index].value = left.values[left.indices[*old_left_it]].value;
+                auto v_index = right.pointers[0];
+                right.pointers[0] = right.values[v_index].next;
+                right.pointers[*new_right_it] = v_index;
+                right.values[v_index].value = left.values[left.pointers[*old_left_it]].value;
                 // add new free slot to left node's chain
-                left.values[left.indices[*old_left_it]].next = left.indices[0];
-                left.indices[0] = left.indices[*old_left_it];
+                left.values[left.pointers[*old_left_it]].next = left.pointers[0];
+                left.pointers[0] = left.pointers[*old_left_it];
             }
             assert(new_right_it == Iterator::rend(right.count+to_shift+1));
             // update separator
@@ -848,7 +848,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, true> : public guid
             // rearrange keys and values in left node
             for (int i=0; i<left.count-to_shift; ++i, --old_left_it, --new_left_it) {
                 left.keys[*new_left_it] = left.keys[*old_left_it];
-                left.indices[*new_left_it] = left.indices[*old_left_it];
+                left.pointers[*new_left_it] = left.pointers[*old_left_it];
             }
             for (unsigned i=left.count-to_shift+1; i<=left.count; ++i) {
                 left.keys[i] = kNegInf;
@@ -867,38 +867,38 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, true> : public guid
             // make space for keys and values from left node
             for (int i=0; i<left.count; ++i, ++old_left_it, ++new_left_it) {
                 left.keys[*new_left_it] = left.keys[*old_left_it];
-                left.indices[*new_left_it] = left.indices[*old_left_it];
+                left.pointers[*new_left_it] = left.pointers[*old_left_it];
             }
             assert(old_left_it == Iterator::end(left.count+1));
             // insert keys and values from right node
             for (int i=0; i<to_shift-1; ++i, ++old_right_it, ++new_left_it) {
                 left.keys[*new_left_it] = right.keys[*old_right_it];
-                auto v_index = left.indices[0];
-                left.indices[0] = left.values[v_index].next;
-                left.indices[*new_left_it] = v_index;
-                left.values[v_index].value = right.values[right.indices[*old_right_it]].value;
+                auto v_index = left.pointers[0];
+                left.pointers[0] = left.values[v_index].next;
+                left.pointers[*new_left_it] = v_index;
+                left.values[v_index].value = right.values[right.pointers[*old_right_it]].value;
                 // add new free slot to right node's chain
-                right.values[right.indices[*old_right_it]].next = right.indices[0];
-                right.indices[0] = right.indices[*old_right_it];
+                right.values[right.pointers[*old_right_it]].next = right.pointers[0];
+                right.pointers[0] = right.pointers[*old_right_it];
             }
             assert(new_left_it == Iterator::rbegin(left.count+to_shift+1));
             // we take out the last iteration out of loop to update separator as well
             {
                 left.keys[*new_left_it] = right.keys[*old_right_it];
-                auto v_index = left.indices[0];
-                left.indices[0] = left.values[v_index].next;
-                left.indices[*new_left_it] = v_index;
-                left.values[v_index].value = right.values[right.indices[*old_right_it]].value;
+                auto v_index = left.pointers[0];
+                left.pointers[0] = left.values[v_index].next;
+                left.pointers[*new_left_it] = v_index;
+                left.values[v_index].value = right.values[right.pointers[*old_right_it]].value;
                 // add new free slot to right node's chain
-                right.values[right.indices[*old_right_it]].next = right.indices[0];
-                right.indices[0] = right.indices[*old_right_it];
+                right.values[right.pointers[*old_right_it]].next = right.pointers[0];
+                right.pointers[0] = right.pointers[*old_right_it];
             }
             separator = right.keys[*old_right_it];
             ++old_right_it;
             // rearrange keys and values in right node
             for (int i=0; i<right.count-to_shift; ++i, ++old_right_it, ++new_right_it) {
                 right.keys[*new_right_it] = right.keys[*old_right_it];
-                right.indices[*new_right_it] = right.indices[*old_right_it];
+                right.pointers[*new_right_it] = right.pointers[*old_right_it];
             }
             for (unsigned i=right.count-to_shift+1; i<=right.count; ++i) {
                 right.keys[i] = kNegInf;
@@ -920,7 +920,7 @@ private:
             keys[i] = kNegInf;
         }
         // setup chain of free value slots
-        indices[0] = 0;
+        pointers[0] = 0;
         for (uint16_t i=0; i<max_values(); ++i) {
             values[i].next = i+1;
         }
@@ -1167,8 +1167,8 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED, true> :
     index_t free_slot;
     /// The keys.
     KeyT keys[LeafNode::max_keys()]; // adjust this
-    /// The indices.
-    uint16_t indices[LeafNode::max_keys()];
+    /// The pointers.
+    uint16_t pointers[LeafNode::max_keys()];
     /// The values.
     ValueSlot values[LeafNode::max_values()]; // adjust this
     
@@ -1204,7 +1204,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED, true> :
 
         return i==Node::count-1u && less(keys[i], target) ? // check if last key is less than key
             std::make_pair((uint32_t)Node::count, false) : // return index one after last key
-            std::make_pair(value ? indices[i] : i, keys[i] == target); 
+            std::make_pair(value ? pointers[i] : i, keys[i] == target); 
     }
 
     /// Insert a key.
@@ -1214,17 +1214,17 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED, true> :
         if (Node::count == kCapacity) throw std::runtime_error("Not enough space!");
         auto [index, found] = lower_bound<false>(key);
         if (found) {
-            values[indices[index]].value = value;
+            values[pointers[index]].value = value;
             return;
         }
         for (auto i=Node::count; i>index; --i) {
             keys[i] = keys[i-1];
-            indices[i] = indices[i-1];
+            pointers[i] = pointers[i-1];
         }
         auto v_index = free_slot;
         free_slot = values[free_slot].next;
         keys[index] = key;
-        indices[index] = v_index;
+        pointers[index] = v_index;
         values[v_index].value = value;
         ++Node::count;
     }
@@ -1234,13 +1234,13 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED, true> :
         // try to find key
         auto [index, found] = lower_bound<false>(key);
         if (!found) return false; // key not found
-        // relink indices
-        values[indices[index]].next = free_slot;
-        free_slot = indices[index];
-        // keys/indices[index] is vacant, propagate it to the last position 
+        // relink pointers
+        values[pointers[index]].next = free_slot;
+        free_slot = pointers[index];
+        // keys/pointers[index] is vacant, propagate it to the last position 
         for (auto i=index; i<Node::count-1u; ++i) {
             keys[i] = keys[i+1];
-            indices[i] = indices[i+1];
+            pointers[i] = pointers[i+1];
         }
         --Node::count;
         return true;
@@ -1260,10 +1260,10 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED, true> :
         // move keys and values starting from index ceil(count/2), in total floor(count/2)
         for (auto i=0, pos=(Node::count+1)/2; i<Node::count/2; ++i) {
             new_node->keys[i] = keys[pos+i];
-            new_node->indices[i] = i;
-            new_node->values[i].value = values[indices[pos+i]].value;
-            values[indices[pos+i]].next = free_slot;
-            free_slot = indices[pos+i];
+            new_node->pointers[i] = i;
+            new_node->values[i].value = values[pointers[pos+i]].value;
+            values[pointers[pos+i]].next = free_slot;
+            free_slot = pointers[pos+i];
         }
         new_node->free_slot = new_node->count = Node::count/2; // floor(count/2)
         Node::count -= Node::count/2; // ceil(count/2)
@@ -1277,8 +1277,8 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED, true> :
             auto v_index = free_slot;
             free_slot = values[free_slot].next;
             keys[i+Node::count] = other.keys[i];
-            indices[i+Node::count] = v_index;
-            values[v_index].value = other.values[other.indices[i]].value;
+            pointers[i+Node::count] = v_index;
+            values[v_index].value = other.values[other.pointers[i]].value;
         }
         Node::count += other.count;
     }
@@ -1288,7 +1288,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED, true> :
         // if possible, circumvent the indirection and directly access the keys and values
         if (lower_bound == kNegInf && upper_bound == kInf) {
             for (auto i=0u; i<Node::count; ++i) {
-                f(keys[i], values[indices[i]].value);
+                f(keys[i], values[pointers[i]].value);
             }
             return;
         }
@@ -1297,7 +1297,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED, true> :
         auto [end, include_end] = upper_bound == kInf ? std::make_pair(static_cast<uint32_t>(Node::count), false) : this->lower_bound<false>(upper_bound);
         end = include_end ? end+1u : end;
         for (uint16_t i=start; i<end; ++i) {
-            f(keys[i], values[indices[i]].value);
+            f(keys[i], values[pointers[i]].value);
         }
     }
 
@@ -1310,7 +1310,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED, true> :
     std::vector<ValueT> get_value_vector() {
         std::vector<ValueT> sorted(Node::count);
         for (uint16_t i=0; i<Node::count; ++i) {
-            sorted[i] = values[indices[i]].value;
+            sorted[i] = values[pointers[i]].value;
         }
         return sorted;
     }
@@ -1322,7 +1322,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED, true> :
             // make space for keys and values from the left node
             for (uint16_t i=right.count; i>0;) {
                 --i;
-                right.indices[i+to_shift] = right.indices[i];
+                right.pointers[i+to_shift] = right.pointers[i];
                 right.keys[i+to_shift] = right.keys[i];
             }
             // move keys and values from left node
@@ -1332,11 +1332,11 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED, true> :
                 right.free_slot = right.values[v_index].next; 
                 // insert from left
                 right.keys[i] = left.keys[pos+i];
-                right.indices[i] = v_index;
-                right.values[v_index].value = left.values[left.indices[pos+i]].value;
+                right.pointers[i] = v_index;
+                right.values[v_index].value = left.values[left.pointers[pos+i]].value;
                 // update left node's chain
-                left.values[left.indices[pos+i]].next = left.free_slot;
-                left.free_slot = left.indices[pos+i];
+                left.values[left.pointers[pos+i]].next = left.free_slot;
+                left.free_slot = left.pointers[pos+i];
             }
             left.count -= to_shift;
             right.count += to_shift;
@@ -1352,16 +1352,16 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED, true> :
                 left.free_slot = left.values[left.free_slot].next; 
                 // insert from right
                 left.keys[i+pos] = right.keys[i];
-                left.indices[i+pos] = v_index;
-                left.values[v_index].value = right.values[right.indices[i]].value;
+                left.pointers[i+pos] = v_index;
+                left.values[v_index].value = right.values[right.pointers[i]].value;
                 // update right node's chain
-                right.values[right.indices[i]].next = right.free_slot;
-                right.free_slot = right.indices[i];
+                right.values[right.pointers[i]].next = right.free_slot;
+                right.free_slot = right.pointers[i];
             }
-            // move keys and indices to the beginning of the right node
+            // move keys and pointers to the beginning of the right node
             for (int i=0; i<right.count-to_shift; ++i) {
                 right.keys[i] = right.keys[i+to_shift];
-                right.indices[i] = right.indices[i+to_shift];
+                right.pointers[i] = right.pointers[i+to_shift];
             }
             left.count += to_shift;
             right.count -= to_shift;

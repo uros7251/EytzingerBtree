@@ -35,11 +35,11 @@ TEST(EytzingerTest, StaticBlockIterator) {
     }
     ASSERT_TRUE(it == Iterator::rend(20));
 
-    it = Iterator::begin(1);
-    ASSERT_TRUE(it == Iterator::end(1));
+    auto it2 = Iterator::begin(1);
+    ASSERT_TRUE(it2 == Iterator::end(1));
 
-    it = Iterator::rbegin(1);
-    ASSERT_TRUE(it == Iterator::rend(1));
+    it2 = Iterator::rbegin(1);
+    ASSERT_TRUE(it2 == Iterator::rend(1));
 }
 
 TEST(EytzingerTest, BlockIterator) {
@@ -61,11 +61,11 @@ TEST(EytzingerTest, BlockIterator) {
     }
     ASSERT_TRUE(it == Iterator::rend(20));
 
-    it = Iterator::begin(1);
-    ASSERT_TRUE(it == Iterator::end(1));
+    auto it2 = Iterator::begin(1);
+    ASSERT_TRUE(it2 == Iterator::end(1));
 
-    it = Iterator::rbegin(1);
-    ASSERT_TRUE(it == Iterator::rend(1));
+    it2 = Iterator::rbegin(1);
+    ASSERT_TRUE(it2 == Iterator::rend(1));
 }
 
 TEST(EytzingerTest, InOrderIterator) {
@@ -90,11 +90,11 @@ TEST(EytzingerTest, InOrderIterator) {
     }
     ASSERT_TRUE(it == Iterator::rend(12));
 
-    it = Iterator::begin(1);
-    ASSERT_TRUE(it == Iterator::end(1));
+    auto it2 = Iterator::begin(1);
+    ASSERT_TRUE(it2 == Iterator::end(1));
 
-    it = Iterator::rbegin(1);
-    ASSERT_TRUE(it == Iterator::rend(1));
+    it2 = Iterator::rbegin(1);
+    ASSERT_TRUE(it2 == Iterator::rend(1));
 }
 
 TEST(EytzingerTest, InnerNodeInsert) {

@@ -9,25 +9,30 @@ namespace guidedresearch {
 
 template<uint16_t Capacity, uint16_t B>
 struct Precalc {
-    uint16_t sizes[10];
-    uint16_t array[Capacity+1];
-    uint16_t index[Capacity+1];
 
-    constexpr Precalc() :array{} {
-        array[0] = 0;
-        index[0] = 0;
+    static constexpr auto ARRAY_CNT = 32 - std::countl_zero(Capacity-1u); // ceil(log2(Capacity))
+    uint16_t array[ARRAY_CNT][Capacity+1];
+    uint16_t index[ARRAY_CNT][Capacity+1];
+
+    constexpr Precalc() : array{}, index{} {
+        for (uint16_t j=0; j<ARRAY_CNT; ++j) {
+            array[j][0] = 0;
+            index[j][0] = 0;
+        
+            array[j][std::min<uint16_t>(1u<<(j+1), Capacity)] = 0;
+            index[j][std::min<uint16_t>(1u<<(j+1), Capacity)] = std::min<uint16_t>(1u<<(j+1), Capacity);
+        }
+        int current[ARRAY_CNT] = {0};
         for (uint16_t k=1, i=0; k<Capacity; ++k) {
             i = next(i/B, i%B);
-            array[k] = i;
-            index[i] = k;
+            for (auto j=0; j < ARRAY_CNT; ++j) {
+                if (j == ARRAY_CNT || i < 1u<<(j+1)) {
+                    ++current[j];
+                    array[j][current[j]] = i;
+                    index[j][i] = current[j];
+                }
+            }
         }
-        array[Capacity] = 0;
-        index[Capacity] = Capacity;
-        sizes[0]=Capacity;
-        for (auto i=1; i<10; ++i) {
-            sizes[i]=Capacity/(1<<i);
-        }
-        
     }
 
     private:
@@ -60,32 +65,41 @@ struct Precalc {
 template<uint16_t Capacity,uint16_t B>
 struct StaticBlockIterator {
     static constexpr Precalc<Capacity, B> precalc{};
+    const uint16_t *array;
+    uint16_t capacity;
     uint16_t i;
     uint16_t n;
 
     StaticBlockIterator() = delete;
-    StaticBlockIterator(uint16_t i, uint16_t n) :i(precalc.index[i]), n(n) {}
+    StaticBlockIterator(uint16_t i, uint16_t n) :n(n) {
+        auto j = 32u - std::countl_zero(n-1u); // index into precalc
+        if (j) --j;
+        assert(1u<<(j+1) >= n);
+        capacity = std::min<uint16_t>(1u<<(j+1), Capacity);
+        array = precalc.array[j];
+        this->i = precalc.index[j][i];        
+    }
 
     bool operator==(const StaticBlockIterator &other) const = default;
-    uint16_t operator*() { return precalc.array[i]; }
+    uint16_t operator*() const { return array[i]; }
 
     StaticBlockIterator& operator++() {
-        assert(i<Capacity);
-        do ++i; while (precalc.array[i]>=n);
-        if (i==Capacity) i=0;
+        assert(i<capacity);
+        do ++i; while (array[i]>=n);
+        if (i==capacity) i=0;
         return *this;
     }
 
     StaticBlockIterator& operator--() {
-        if (i==0) i=Capacity;
-        do --i; while (precalc.array[i]>=n);
+        if (i==0) i=capacity;
+        do --i; while (array[i]>=n);
         return *this;
     }
 
-    static StaticBlockIterator begin(uint16_t size) { assert(size); return ++StaticBlockIterator(0u, size); }
-    static StaticBlockIterator rbegin(uint16_t size) { return --StaticBlockIterator(Capacity, size); }
-    static StaticBlockIterator end(uint16_t size)  { return StaticBlockIterator(0u, size); }
-    static StaticBlockIterator rend(uint16_t size)  { return StaticBlockIterator(0u, size); }
+    static StaticBlockIterator begin(uint16_t end) { assert(end); return ++StaticBlockIterator(0u, end); }
+    static StaticBlockIterator rbegin(uint16_t end) { return --StaticBlockIterator(0u, end); }
+    static StaticBlockIterator end(uint16_t end)  { return StaticBlockIterator(0u, end); }
+    static StaticBlockIterator rend(uint16_t end)  { return StaticBlockIterator(0u, end); }
 };
 
 /// @brief Iterator for in-order traversal of the keys stored as static btree
@@ -99,16 +113,18 @@ struct EytzingerIterator {
     /// @brief The current index
     uint32_t k;
     /// @brief The node count
-    uint32_t n;
+    const uint32_t n;
+    /// @brief The indicator that current node has no children (false doesn't mean that it necessarily has)
+    bool leaf_level;
 
     EytzingerIterator() = delete;
-    EytzingerIterator(uint32_t i, uint32_t size) : k(i), n(size) {}
+    EytzingerIterator(uint32_t i, uint32_t end) : k(i), n(end), leaf_level(end <= B) {}
     EytzingerIterator(const EytzingerIterator&) = default;
 
     bool operator==(const EytzingerIterator &other) const { assert(n==other.n); return k == other.k; }
-    EytzingerIterator& operator=(const EytzingerIterator &other) = default;
+    EytzingerIterator& operator=(const EytzingerIterator &other) { k = other.k; leaf_level = other.leaf_level; return *this; };
 
-    uint32_t operator*() { return k; }
+    uint32_t operator*() const { return k; }
 
     /// @brief Calculates the index of the beginning of child block of entry k
     /// @return Returns the index of the beginning of child block of entry k
@@ -122,28 +138,35 @@ struct EytzingerIterator {
 
     /// @brief Advance the iterator to the next key in in-order traversal
     EytzingerIterator& operator++() {
-        if (B+child() < n) {
-            // go to right child
-            k = B+child();
-            // then left as much as possible
-            while (child() < n) k=child();
-            return *this;
+        if (!leaf_level) [[unlikely]] {
+            leaf_level = true;
+            if (B+child() < n) {
+                // go to right child
+                k = B+child();
+                // then left as much as possible
+                while (child() < n) k=child();
+                return *this;
+            }
         }
-        uint32_t j = k % B + 1, i = k / B;
-        if (k+1u<n && j<B) {
+        uint32_t j = k % B;
+        if (k+1u<n && j<B-1u) [[likely]] {
             ++k;
             return *this;
         }
+        uint32_t i = k / B;
+        // climb up while rightmost child
         do {
             std::tie(i,j) = parent(i);
-        } while (j>=B);
+        } while (j==B);
         k = i*B+j;
+        leaf_level = false;
         return *this;
     }
 
     /// @brief Advance the iterator to the next key in in-order traversal
     EytzingerIterator& operator--() {
-        if (child() < n) {
+        leaf_level = false;
+        if (child() < n) [[unlikely]] {
             k=child()+B-1; // go to left child's rightmost entry
             // go right until either rightmost entry is out of bounds or 
             while (k < n && child()+B < n) k=child()+2*B-1;
@@ -153,7 +176,7 @@ struct EytzingerIterator {
             k = k >= n ? n-1u : k;
             return *this;
         }
-        if (k % B > 0) {
+        if (k % B > 0) [[likely]] {
             // go left
             --k;
             return *this;
@@ -169,25 +192,25 @@ struct EytzingerIterator {
     }
 
     /// @brief Create an iterator pointing to the first key in in-order traversal
-    /// @param size The node count
+    /// @param end The smallest out-of-bounds index
     /// @return Iterator pointing to the first key in in-order traversal
-    static EytzingerIterator begin(uint32_t size) { assert(size); return ++EytzingerIterator(0u, size); }
+    static EytzingerIterator begin(uint32_t end) { assert(end); return ++EytzingerIterator(0u, end); }
     
     /// @brief Create an iterator pointing to the last key in reverse in-order traversal
-    /// @param size The node count
+    /// @param end The smallest out-of-bounds index
     /// @return Iterator pointing to the last key in in-order traversal
-    static EytzingerIterator rbegin(uint32_t size) {
-        if (B >= size) return EytzingerIterator(size-1, size);
+    static EytzingerIterator rbegin(uint32_t end) {
+        if (B >= end) return EytzingerIterator(end-1, end);
         uint32_t i=0;
         while(true) {
-            if ((i+1)*B >= size) return EytzingerIterator(size-1, size);
-            else if (((i+1)*B+i)*B >= size) return EytzingerIterator((i+1)*B-1, size);
+            if ((i+1)*B >= end) return EytzingerIterator(end-1, end);
+            else if (((i+1)*B+i)*B >= end) return EytzingerIterator((i+1)*B-1, end);
             i = (i+1)*B+i; // = i*(B+1)+B
         }
     }
 
-    static EytzingerIterator end(uint32_t size)  { return EytzingerIterator(0u, size); }
-    static EytzingerIterator rend(uint32_t size)  { return EytzingerIterator(0u, size); }
+    static EytzingerIterator end(uint32_t end)  { return EytzingerIterator(0u, end); }
+    static EytzingerIterator rend(uint32_t end)  { return EytzingerIterator(0u, end); }
 };
 
 /// @brief Iterator for in-order traversal of the keys stored as static binary tree
@@ -199,7 +222,7 @@ struct EytzingerIterator<1u> {
     uint32_t n;
 
     EytzingerIterator() = delete;
-    EytzingerIterator(uint32_t k, uint32_t size) :k(k), n(size) {}
+    EytzingerIterator(uint32_t k, uint32_t end) :k(k), n(end) {}
     EytzingerIterator(const EytzingerIterator&) = default;
 
     bool operator==(const EytzingerIterator &other) const { assert(n==other.n); return k == other.k; }
@@ -236,17 +259,17 @@ struct EytzingerIterator<1u> {
     }
 
     /// @brief Create an iterator pointing to the first key in in-order traversal
-    /// @param size The node count
+    /// @param end The smallest out-of-bounds index
     /// @return Iterator pointing to the first key in in-order traversal
-    static EytzingerIterator begin(uint32_t size) { assert(size); return EytzingerIterator((1u << (32 - std::countl_zero(size-1u))) >> 1, size); } // greatest power of 2 less than n
+    static EytzingerIterator begin(uint32_t end) { assert(end); return EytzingerIterator((1u << (32 - std::countl_zero(end-1u))) >> 1, end); } // greatest power of 2 less than n
     
     /// @brief Create an iterator pointing to the last key in reverse in-order traversal
-    /// @param size The node count
+    /// @param end The smallest out-of-bounds index
     /// @return Iterator pointing to the last key in in-order traversal
-    static EytzingerIterator rbegin(uint32_t size) { return EytzingerIterator(((1u << (32 - std::countl_zero(size))) >> 1) - 1u, size); } // (greatest power of 2 not bigger than n) - 1
+    static EytzingerIterator rbegin(uint32_t end) { return EytzingerIterator(((1u << (32 - std::countl_zero(end))) >> 1) - 1u, end); } // (greatest power of 2 not bigger than n) - 1
 
-    static EytzingerIterator end(uint32_t size)  { return EytzingerIterator(0u, size); }
-    static EytzingerIterator rend(uint32_t size)  { return EytzingerIterator(0u, size); }
+    static EytzingerIterator end(uint32_t end)  { return EytzingerIterator(0u, end); }
+    static EytzingerIterator rend(uint32_t end)  { return EytzingerIterator(0u, end); }
 };
 
 /// @brief Iterator for in-order traversal of the keys stored as sorted array
@@ -257,7 +280,7 @@ struct OrderedIterator {
     uint32_t n;
 
     OrderedIterator() = delete;
-    OrderedIterator(uint32_t k, uint32_t size) :k(k), n(size) {}
+    OrderedIterator(uint32_t k, uint32_t end) :k(k), n(end) {}
     OrderedIterator(const OrderedIterator&) = default;
 
     bool operator==(const OrderedIterator &other) const { assert(n==other.n); return k == other.k; }
@@ -278,17 +301,17 @@ struct OrderedIterator {
     }
 
     /// @brief Create an iterator pointing to the first key in in-order traversal
-    /// @param size The node count
+    /// @param end The smallest out-of-bounds index
     /// @return Iterator pointing to the first key in in-order traversal
-    static OrderedIterator begin(uint32_t size) { assert(size); return OrderedIterator(std::min(size-1u, 1u), size); }
+    static OrderedIterator begin(uint32_t end) { assert(end); return OrderedIterator(std::min(end-1u, 1u), end); }
     
     /// @brief Create an iterator pointing to the last key in reverse in-order traversal
-    /// @param size The node count
+    /// @param end The smallest out-of-bounds index
     /// @return Iterator pointing to the last key in in-order traversal
-    static OrderedIterator rbegin(uint32_t size) { assert(size); return OrderedIterator(size-1u, size); }
+    static OrderedIterator rbegin(uint32_t end) { assert(end); return OrderedIterator(end-1u, end); }
 
-    static OrderedIterator end(uint32_t size)  { return OrderedIterator(0u, size); }
-    static OrderedIterator rend(uint32_t size)  { return OrderedIterator(0u, size); }
+    static OrderedIterator end(uint32_t end)  { return OrderedIterator(0u, end); }
+    static OrderedIterator rend(uint32_t end)  { return OrderedIterator(0u, end); }
 };
 
 } // namespace guidedresearch

@@ -30,8 +30,8 @@ struct IntLoad {
 template <typename IntType>
 struct UniformLoad : public IntLoad<IntType> {
     UniformLoad(size_t size, size_t lookup_factor = 10) : IntLoad<IntType>(size, lookup_factor) {
-        std::random_device rd;
-        std::mt19937 g(rd());
+        // std::random_device rd;
+        std::mt19937 g(7251);
         std::uniform_int_distribution<IntType> dis(0, size-1);
         for (size_t i = 0; i < size*lookup_factor; ++i) {
             IntLoad<IntType>::lookup_indices.push_back(dis(g));
@@ -45,8 +45,8 @@ template <typename IntType>
 struct ZipfianLoad : public IntLoad<IntType> {
     ZipfianLoad(size_t size, size_t lookup_factor = 10) : IntLoad<IntType>(size, lookup_factor) {
         ZipfDistribution zipf(size, 1); // alpha = 1
-        std::random_device rd;
-        std::mt19937_64 engine(rd());
+        // std::random_device rd;
+        std::mt19937_64 engine(7251);
         for (size_t i = 0; i < size*lookup_factor; ++i) {
             IntLoad<IntType>::lookup_indices.push_back(zipf(engine)-1);
         }

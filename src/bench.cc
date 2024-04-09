@@ -94,13 +94,13 @@ void layout_comparison(guidedresearch::IntLoad<KeyT>& load) {
         using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, PageSize, guidedresearch::NodeLayout::SORTED, guidedresearch::NodeLayout::SORTED>;
         auto label = "Standard";
         std::tie(ref_insert, ref_lookup, ref_range_scan, ref_erase) = bench<BTree>(load);
-        std::cout << load.name() << "|" << PageSize << "|" << label << "|" << ref_insert << "|" << ref_lookup << "|" << ref_range_scan << "|" << ref_erase << "|\n";
+        std::cout << load.name() << "," << PageSize << "," << label << ",0," << ref_insert << "," << ref_lookup << "," << ref_range_scan << "," << ref_erase << "\n";
     }
     {
         using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, PageSize, guidedresearch::NodeLayout::SORTED, guidedresearch::NodeLayout::SORTED, true>;
-        auto label = "Standard Fast inserts";
+        auto label = "Standard";
         std::tie(ref_insert_fast_insert, ref_lookup_fast_insert, ref_range_scan_fast_insert, ref_erase_fast_insert) = bench<BTree>(load);
-        std::cout << load.name() << "|" << PageSize << "|" << label << "|" << ref_insert_fast_insert << "|" << ref_lookup_fast_insert << "|" << ref_range_scan_fast_insert << "|" << ref_erase_fast_insert << "|\n";
+        std::cout << load.name() << "," << PageSize << "," << label << ",1," << ref_insert_fast_insert << "," << ref_lookup_fast_insert << "," << ref_range_scan_fast_insert << "," << ref_erase_fast_insert << "\n";
         std::cerr << label << " speedup:\n"
             << "insert: " << static_cast<double>(ref_insert)/ref_insert_fast_insert
             << "x, lookup: " << static_cast<double>(ref_lookup)/ref_lookup_fast_insert
@@ -112,7 +112,7 @@ void layout_comparison(guidedresearch::IntLoad<KeyT>& load) {
         using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, PageSize, guidedresearch::NodeLayout::EYTZINGER, guidedresearch::NodeLayout::EYTZINGER, false>;
         auto label = "Eytzinger";
         auto [insert, lookup, range_scan, erase] = bench<BTree>(load);
-        std::cout << load.name() << "|" << PageSize << "|" << label << "|" << insert << "|" << lookup << "|" << range_scan << "|" << erase << "|\n";
+        std::cout << load.name() << "," << PageSize << "," << label << ",0," << insert << "," << lookup << "," << range_scan << "," << erase << "\n";
         std::cerr << label << " speedup:\n"
             << "insert: " << static_cast<double>(ref_insert_fast_insert)/insert
             << "x, lookup: " << static_cast<double>(ref_lookup)/lookup
@@ -122,9 +122,9 @@ void layout_comparison(guidedresearch::IntLoad<KeyT>& load) {
     }
     {
         using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, PageSize, guidedresearch::NodeLayout::EYTZINGER, guidedresearch::NodeLayout::EYTZINGER, true>;
-        auto label = "Eytzinger Fast inserts";
+        auto label = "Eytzinger";
         auto [insert, lookup, range_scan, erase] = bench<BTree>(load);
-        std::cout << load.name() << "|" << PageSize << "|" << label << "|" << insert << "|" << lookup << "|" << range_scan << "|" << erase << "|\n";
+        std::cout << load.name() << "," << PageSize << "," << label << ",1," << insert << "," << lookup << "," << range_scan << "," << erase << "\n";
         std::cerr << label << " speedup:\n"
             << "insert: " << static_cast<double>(ref_insert_fast_insert)/insert
             << "x, lookup: " << static_cast<double>(ref_lookup_fast_insert)/lookup
@@ -136,7 +136,7 @@ void layout_comparison(guidedresearch::IntLoad<KeyT>& load) {
         using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, PageSize, guidedresearch::NodeLayout::EYTZINGER_SIMD, guidedresearch::NodeLayout::EYTZINGER_SIMD, false>;
         auto label = "Eytzinger+SIMD";
         auto [insert, lookup, range_scan, erase] = bench<BTree>(load);
-        std::cout << load.name() << "|" << PageSize << "|" << label << "|" << insert << "|" << lookup << "|" << range_scan << "|" << erase << "|\n";
+        std::cout << load.name() << "," << PageSize << "," << label << ",0," << insert << "," << lookup << "," << range_scan << "," << erase << "\n";
         std::cerr << label << " speedup:\n"
             << "insert: " << static_cast<double>(ref_insert)/insert
             << "x, lookup: " << static_cast<double>(ref_lookup)/lookup
@@ -146,9 +146,9 @@ void layout_comparison(guidedresearch::IntLoad<KeyT>& load) {
     }
     {
         using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, PageSize, guidedresearch::NodeLayout::EYTZINGER_SIMD, guidedresearch::NodeLayout::EYTZINGER_SIMD, true>;
-        auto label = "Eytzinger+SIMD Fast inserts";
+        auto label = "Eytzinger+SIMD";
         auto [insert, lookup, range_scan, erase] = bench<BTree>(load);
-        std::cout << load.name() << "|" << PageSize << "|" << label << "|" << insert << "|" << lookup << "|" << range_scan << "|" << erase << "|\n";
+        std::cout << load.name() << "," << PageSize << "," << label << ",1," << insert << "," << lookup << "," << range_scan << "," << erase << "\n";
         std::cerr << label << " speedup:\n"
             << "insert: " << static_cast<double>(ref_insert_fast_insert)/insert
             << "x, lookup: " << static_cast<double>(ref_lookup_fast_insert)/lookup
@@ -158,7 +158,7 @@ void layout_comparison(guidedresearch::IntLoad<KeyT>& load) {
     }
 }
 
-constexpr size_t page_sizes[] = {1024, 4096, 16384};
+constexpr size_t page_sizes[] = {1<<12, 1<<14, 1<<16}; // 4K, 16K, 64K
 constexpr unsigned ARRAY_SIZE = sizeof(page_sizes)/sizeof(size_t);
 
 template<unsigned N = ARRAY_SIZE>
@@ -221,20 +221,46 @@ void inner_node_comparison() {
 
 void load_comparison() {
     {
-        guidedresearch::ZipfianLoad<KeyT> load(1<<20);
+        guidedresearch::ZipfianLoad<KeyT> load(1<<18);
         page_size_comparison(load);
     }
     {
-        guidedresearch::UniformLoad<KeyT> load(1<<20);
+        guidedresearch::UniformLoad<KeyT> load(1<<18);
         page_size_comparison(load);
     }
 }
 
-int main() {
-    load_comparison();
-    //guidedresearch::UniformLoad<KeyT> load(1<<20);
-    //layout_comparison<1u<<10>(load);
-    //inner_node_comparison(load);
+void iterator() {
+    using Iterator = guidedresearch::EytzingerIterator<8>;
 
+    constexpr auto size = 2500, num_iters = 100000;
+    auto checksum = 0u;
+    auto start = rdtsc();
+    for (int i=0; i<num_iters; ++i) {
+        auto it = Iterator::begin(size);
+        for (auto end = Iterator::end(size); it != end; ++it) {
+            checksum ^= *it;
+        }
+    }
+    auto avg = (rdtsc()-start)/static_cast<double>(num_iters);
+    std::cerr << "checksum: " << checksum << "\n";
+    std::cout << "avg time: " << avg << "\n";
+}
+
+int main() {
+    #if defined(__AVX512F__) && defined(__AVX512VL__)
+    std::cerr << "AVX512\n";
+    #elif defined(__AVX__) && defined(__AVX2__)
+    std::cerr << "AVX/AVX2\n"
+    #else
+    std::cerr << "NO AVX\n";
+    #endif
+    std::cout << "load,page_size,layout,fast_inserts,insert,lookup,range_scan,erase\n";
+    //load_comparison();
+    guidedresearch::UniformLoad<KeyT> load(1<<22);
+    layout_comparison<1u<<14>(load);
+    //inner_node_comparison(load);
+    //iterator();
+    
     return 0;
 }

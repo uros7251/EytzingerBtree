@@ -61,7 +61,7 @@ struct BTree : public Segment {
             // traverse inner nodes
             InnerNode *inner_node = reinterpret_cast<InnerNode*>(node);
             auto [index, match] = inner_node->lower_bound(key);
-            Swip swip = inner_node->children[index];
+            Swip &swip = inner_node->children[index];
             parent_page = std::move(page);
             // lock coupling
             page.fix(swip);
@@ -206,7 +206,7 @@ struct BTree : public Segment {
         InnerNode &parent = *reinterpret_cast<InnerNode*>(parent_page->get_data());
         uint16_t left_slot;
         // determine which sibling to merge with
-        if (child_slot == parent.first_sorted()) { // NEED FIX FOR EYTZINGER, we need leftmost key in sorted order
+        if (child_slot == parent.first_sorted()) {
             // only right sibling exists
             Swip &swip = parent.children[parent.next_sorted(child_slot)];
             neighboor_page.fix(swip);
@@ -214,17 +214,17 @@ struct BTree : public Segment {
             left_node = reinterpret_cast<Node*>(child_page->get_data());
             right_node = reinterpret_cast<Node*>(neighboor_page->get_data());
         }
-        else if (child_slot == parent.last_sorted()) { // NEED FIX FOR EYTZINGER, we need rightmost key in sorted order
+        else if (child_slot == parent.last_sorted()) {
             // only left sibling exists
-            left_slot = parent.prev_sorted(child_slot); // NEED FIX FOR EYTZINGER, we need previous key in sorted order
+            left_slot = parent.prev_sorted(child_slot);
             Swip &swip = parent.children[left_slot];
             neighboor_page.fix(swip);
             left_node = reinterpret_cast<Node*>(neighboor_page->get_data());
             right_node = reinterpret_cast<Node*>(child_page->get_data());
         }
         else {
-            Swip &left_swip = parent.children[parent.prev_sorted(child_slot)], // NEED FIX FOR EYTZINGER
-                &right_swip = parent.children[parent.next_sorted(child_slot)]; // NEED FIX FOR EYTZINGER
+            Swip &left_swip = parent.children[parent.prev_sorted(child_slot)],
+                &right_swip = parent.children[parent.next_sorted(child_slot)];
             UniquePage left_neighboor_page(buffer_manager, left_swip),
                     right_neighboor_page(buffer_manager, right_swip);
             left_node = reinterpret_cast<Node*>(left_neighboor_page->get_data());
@@ -236,7 +236,7 @@ struct BTree : public Segment {
             }
             else {
                 right_node = reinterpret_cast<Node*>(child_page->get_data());
-                left_slot = parent.prev_sorted(child_slot); // NEED FIX FOR EYTZINGER, we need previous key in sorted order
+                left_slot = parent.prev_sorted(child_slot);
                 neighboor_page = std::move(left_neighboor_page);
             }
         }
@@ -257,7 +257,7 @@ struct BTree : public Segment {
                 else {
                     InnerNode &left_node_as_inner = *static_cast<InnerNode*>(left_node),
                                 &right_node_as_inner = *static_cast<InnerNode*>(right_node);
-                    KeyT old_separator = parent.keys[parent.first_sorted()]; // NEED FIX FOR EYTZINGER
+                    KeyT old_separator = parent.keys[parent.first_sorted()];
                     parent = left_node_as_inner; // copy
                     parent.merge(right_node_as_inner, old_separator);
                 }
