@@ -13,13 +13,13 @@ struct ValueT {
     static constexpr int size=4;
     int64_t a[size];
     ValueT() = default;
-    ValueT(int64_t a) { this->a[0]=a; }
+    ValueT(int64_t a) :a{} { this->a[0]=a; }
 };
 
 uint64_t rdtsc() {
   unsigned int lo, hi;
   __asm__ __volatile__("rdtsc" : "=a"(lo), "=d"(hi));
-  return ((uint64_t)hi << 32) | lo;
+  return (static_cast<uint64_t>(hi) << 32) | lo;
 }
 
 template<typename BTree>
@@ -28,8 +28,8 @@ std::tuple<uint64_t,uint64_t, uint64_t, uint64_t> bench(guidedresearch::IntLoad<
     BTree tree(0, buffer_manager);
 
     auto& keys = load.keys;
-    auto n = load.size;
-    auto m = load.size*load.lookup_factor;
+    const auto n = load.size;
+    const auto m = load.size*load.lookup_factor;
 
     auto start {rdtsc()};
     // Insert values
@@ -46,7 +46,7 @@ std::tuple<uint64_t,uint64_t, uint64_t, uint64_t> bench(guidedresearch::IntLoad<
     // Lookup all values
     uint64_t checksum = 0ul;
     start = rdtsc();
-    for (auto i = 0ul; i < m; ++i) {
+    for (auto i = 0u; i < m; ++i) {
         auto key = load.lookup(i);
         auto result = tree.lookup(key);
         if (result) checksum ^= (*result).a[0];
@@ -62,11 +62,11 @@ std::tuple<uint64_t,uint64_t, uint64_t, uint64_t> bench(guidedresearch::IntLoad<
     auto lookup_time = duration/m;
 
     int64_t total = 0;
-    KeyT min = n/64, max = min;
+    KeyT min = static_cast<KeyT>(n/64), max = min;
     auto num_iters = n>>10; // n/1024
     start = rdtsc();
     for (auto i=0u; i<num_iters; ++i) {
-        max += n/(2*num_iters);
+        max += static_cast<KeyT>(n/(2*num_iters));
         tree.traverse([&total]([[maybe_unused]] const KeyT &k, const ValueT &v) {
             total += v.a[0];
         }, min, max);
@@ -177,7 +177,7 @@ void inner_node_comparison() {
     constexpr auto PageSize = 1<<14; // 16KB 
 
     using AlignedVector = guidedresearch::AlignedVector;
-    using KeyT = int32_t;
+    using KeyT = int64_t;
     using ValueT = int64_t;
     using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, PageSize, guidedresearch::NodeLayout::SORTED>;
     using Swip = guidedresearch::Swip;
@@ -203,10 +203,10 @@ void inner_node_comparison() {
 
     // std::random_device rd;
     std::mt19937 g(7251);
-    std::shuffle(keys.begin(), keys.end(), g);
+    std::ranges::shuffle(keys, g);
     
     auto time=rdtsc();
-    int checksum = 0;
+    auto checksum = 0u;
     constexpr auto N = 1<<10;
     for (auto j=0; j<N; ++j) {
     for (auto i : keys) {
@@ -221,11 +221,11 @@ void inner_node_comparison() {
 
 void load_comparison() {
     {
-        guidedresearch::ZipfianLoad<KeyT> load(1<<18);
+        guidedresearch::ZipfianLoad<KeyT> load(1<<22);
         page_size_comparison(load);
     }
     {
-        guidedresearch::UniformLoad<KeyT> load(1<<18);
+        guidedresearch::UniformLoad<KeyT> load(1<<22);
         page_size_comparison(load);
     }
 }
@@ -255,7 +255,7 @@ int main() {
     #else
     std::cerr << "NO AVX\n";
     #endif
-    std::cout << "load,page_size,layout,fast_inserts,insert,lookup,range_scan,erase\n";
+    std::cout << "load,page_size,layout,fast_inserts,Insert,Lookup,Range_scan,Erase\n";
     //load_comparison();
     guidedresearch::UniformLoad<KeyT> load(1<<22);
     layout_comparison<1u<<14>(load);

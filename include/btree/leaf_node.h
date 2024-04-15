@@ -74,6 +74,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, false> : public gui
     /// Get the index of the first key that is not less than than a provided key.
     /// @param[in] key          The key that should be inserted.
     /// @return                 The index of the first key that is not less than the provided key and boolean indicating if the key is equal.
+    __attribute_noinline__
     std::pair<uint32_t, bool> lower_bound(const KeyT &target) {
         if constexpr (layout == NodeLayout::EYTZINGER) {
             // explained at https://en.algorithmica.org/hpc/data-structures/binary-search/
@@ -156,6 +157,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, false> : public gui
     /// Insert a key.
     /// @param[in] key          The key that should be inserted.
     /// @param[in] value        The value that should be inserted.
+    __attribute_noinline__
     void insert(const KeyT &key, const ValueT &value) {
         // for example, insert(3, 40)
         // BEFORE: in_order(keys) = [1, 4, 9], values = [8, 3, 13, 7], count = 3
@@ -226,6 +228,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, false> : public gui
     }
 
     /// Erase a key.
+    __attribute_noinline__
     bool erase(const KeyT &key) {
         // for example, erase(3)
         // BEFORE: keys = [1, 3, 4, 9], values = [8, 3, 40, 13], count = 4
@@ -517,6 +520,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, true> : public guid
     /// @param[in] key          The key that should be inserted.
     /// @return                 The index of the first key that is not less than the provided key and boolean indicating if the key is equal.
     template<bool value = true>
+    __attribute_noinline__
     std::pair<uint32_t, bool> lower_bound(const KeyT &target) {
         if constexpr (layout == NodeLayout::EYTZINGER) {
             // explained at https://en.algorithmica.org/hpc/data-structures/binary-search/
@@ -588,8 +592,8 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, true> : public guid
             while (n>1) {
                 auto half = n/2;
                 n -= half; // ceil(n/2)
-                __builtin_prefetch(&keys[i+n/2-1]); // prefetch left
-                __builtin_prefetch(&keys[i+half+n/2-1]); // prefetch right
+                // __builtin_prefetch(&keys[i+n/2-1]); // prefetch left
+                // __builtin_prefetch(&keys[i+half+n/2-1]); // prefetch right
                 i += less(keys[i+half-1], target) * half; // hopefully compiler translates this to cmov
             }
 
@@ -603,6 +607,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, true> : public guid
     /// Insert a key.
     /// @param[in] key          The key that should be inserted.
     /// @param[in] value        The value that should be inserted.
+    __attribute_noinline__
     void insert(const KeyT &key, const ValueT &value) {
         // for example, insert(3, 40)
         // BEFORE: in_order(keys) = [1, 4, 9], values = [8, 3, 13, 7], count = 3
@@ -679,6 +684,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, true> : public guid
     }
 
     /// Erase a key.
+    __attribute_noinline__
     bool erase(const KeyT &key) {
         // for example, erase(3)
         // BEFORE: keys = [1, 3, 4, 9], values = [8, 3, 40, 13], count = 4
@@ -978,6 +984,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED, false> 
     /// Get the index of the first key that is not less than than a provided key.
     /// @param[in] target       The key to look for.
     /// @return                 The index of the first key that is not less than the provided key and boolean indicating if the key is equal.
+    __attribute_noinline__
     std::pair<uint32_t, bool> lower_bound(const KeyT &target) {
         if (Node::count==0) return {0u, false}; // no keys
         
@@ -1018,6 +1025,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED, false> 
     /// Insert a key.
     /// @param[in] key          The key that should be inserted.
     /// @param[in] value        The value that should be inserted.
+    __attribute_noinline__
     void insert(const KeyT &key, const ValueT &value) {
         assert(Node::count < kCapacity);
         auto [index, found] = lower_bound(key);
@@ -1036,6 +1044,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED, false> 
     }
 
     /// Erase a key.
+    __attribute_noinline__
     bool erase(const KeyT &key) {
         // try to find key
         auto [index, found] = lower_bound(key);
@@ -1188,6 +1197,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED, true> :
     /// @tparam value           If true (default), return the index of the corresponding value, otherwise return the index i of the target key.
     /// @return                 The index of the first key that is not less than the provided key and boolean indicating if the key is equal.
     template<bool value = true>
+    __attribute_noinline__
     std::pair<uint32_t, bool> lower_bound(const KeyT &target) {
         if (Node::count==0) return {0u, false}; // no keys
         
@@ -1210,6 +1220,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED, true> :
     /// Insert a key.
     /// @param[in] key          The key that should be inserted.
     /// @param[in] value        The value that should be inserted.
+    __attribute_noinline__
     void insert(const KeyT &key, const ValueT &value) {
         if (Node::count == kCapacity) throw std::runtime_error("Not enough space!");
         auto [index, found] = lower_bound<false>(key);
@@ -1230,6 +1241,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED, true> :
     }
 
     /// Erase a key.
+    __attribute_noinline__
     bool erase(const KeyT &key) {
         // try to find key
         auto [index, found] = lower_bound<false>(key);
