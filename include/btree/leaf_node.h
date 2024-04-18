@@ -110,7 +110,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, false> : public gui
 
             uint32_t N = Node::count/B+1u; // block_count = block index of the last element + 1
             auto k=0u; // save last not-less-than target
-            for (uint32_t i=0, j=1, mask=1; i < N; i+=i*B+j, j=0, mask=0) {
+            for (uint32_t i=0, j, mask; i < N; i+=i*B+j) {
                 assert(reinterpret_cast<uintptr_t>(&keys[i*B]) % CACHELINE == 0);
                 // comparison
                 #if defined(__AVX512F__) && defined(__AVX512VL__)
@@ -121,7 +121,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, false> : public gui
                 mask = less256(key_vec, &keys[i*B]) + (less256(key_vec, &keys[i*B+B/2]) << (B/2));
                 j = std::countr_one(mask);
                 #else
-                for (; j<B && less(keys[i*B+j], target); ++j);
+                for (j=0; j<B && less(keys[i*B+j], target); ++j);
                 #endif
                 k = j < B ? i*B+j : k; // save descent to the left
                 // IMPORTANT NOTE: we pad key array with kNegInf to simplify the condition for saving the last descent to the left.
@@ -558,7 +558,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, true> : public guid
 
             uint32_t N = Node::count/B+1u; // block_count = block index of the last element + 1
             auto k=0u; // save last not-less-than target
-            for (uint32_t i=0, j=1, mask=1; i < N; i+=i*B+j, j=0, mask=0) {
+            for (uint32_t i=0, j, mask; i < N; i+=i*B+j) {
                 assert(reinterpret_cast<uintptr_t>(&keys[i*B]) % CACHELINE == 0);
                 // comparison
                 #if defined(__AVX512F__) && defined(__AVX512VL__)
@@ -569,7 +569,7 @@ struct LeafNode<KeyT, ValueT, ComparatorT, PageSize, layout, true> : public guid
                 mask = less256(key_vec, &keys[i*B]) + (less256(key_vec, &keys[i*B+B/2]) << (B/2));
                 j = std::countr_one(mask);
                 #else
-                for (; j<B && less(keys[i*B+j], target); ++j);
+                for (j=0; j<B && less(keys[i*B+j], target); ++j);
                 #endif
                 k = j < B ? i*B+j : k; // save descent to the left
                 // IMPORTANT NOTE: we pad key array with kNegInf to simplify the condition for saving the last descent to the left.

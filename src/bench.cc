@@ -62,14 +62,14 @@ std::tuple<uint64_t,uint64_t, uint64_t, uint64_t> bench(guidedresearch::IntLoad<
     auto lookup_time = duration/m;
 
     int64_t total = 0;
-    KeyT min = static_cast<KeyT>(n/64), max = min;
+    KeyT min = static_cast<KeyT>(n/64), length = 0;
     auto num_iters = n>>10; // n/1024
     start = rdtsc();
     for (auto i=0u; i<num_iters; ++i) {
-        max += static_cast<KeyT>(n/(2*num_iters));
+        length += static_cast<KeyT>(n/(2*num_iters));
         tree.traverse([&total]([[maybe_unused]] const KeyT &k, const ValueT &v) {
             total += v.a[0];
-        }, min, max);
+        }, min, min+length);
     }
     end = rdtsc();
     auto range_scan_time = (end-start)/num_iters;
@@ -114,7 +114,7 @@ void layout_comparison(guidedresearch::IntLoad<KeyT>& load) {
         auto [insert, lookup, range_scan, erase] = bench<BTree>(load);
         std::cout << load.name() << "," << PageSize << "," << label << ",0," << insert << "," << lookup << "," << range_scan << "," << erase << "\n";
         std::cerr << label << " speedup:\n"
-            << "insert: " << static_cast<double>(ref_insert_fast_insert)/insert
+            << "insert: " << static_cast<double>(ref_insert)/insert
             << "x, lookup: " << static_cast<double>(ref_lookup)/lookup
             << "x, range scan: " << static_cast<double>(ref_range_scan)/range_scan
             << "x, erase: " << static_cast<double>(ref_erase)/erase
@@ -134,7 +134,14 @@ void layout_comparison(guidedresearch::IntLoad<KeyT>& load) {
     }
     {
         using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, PageSize, guidedresearch::NodeLayout::EYTZINGER_SIMD, guidedresearch::NodeLayout::EYTZINGER_SIMD, false>;
-        auto label = "Eytzinger+SIMD";
+        #if defined(__AVX512F__) && defined(__AVX512VL__)
+        auto label = "n-ary Eytzinger + SIMD";
+        #elif defined(__AVX__) && defined(__AVX2__)
+        auto label = "n-ary Eytzinger + SIMD";
+        #else
+        auto label = "n-ary Eytzinger";
+        #endif
+        
         auto [insert, lookup, range_scan, erase] = bench<BTree>(load);
         std::cout << load.name() << "," << PageSize << "," << label << ",0," << insert << "," << lookup << "," << range_scan << "," << erase << "\n";
         std::cerr << label << " speedup:\n"
@@ -146,7 +153,13 @@ void layout_comparison(guidedresearch::IntLoad<KeyT>& load) {
     }
     {
         using BTree = guidedresearch::BTree<KeyT, ValueT, std::less<KeyT>, PageSize, guidedresearch::NodeLayout::EYTZINGER_SIMD, guidedresearch::NodeLayout::EYTZINGER_SIMD, true>;
-        auto label = "Eytzinger+SIMD";
+        #if defined(__AVX512F__) && defined(__AVX512VL__)
+        auto label = "n-ary Eytzinger + SIMD";
+        #elif defined(__AVX__) && defined(__AVX2__)
+        auto label = "n-ary Eytzinger + SIMD";
+        #else
+        auto label = "n-ary Eytzinger";
+        #endif
         auto [insert, lookup, range_scan, erase] = bench<BTree>(load);
         std::cout << load.name() << "," << PageSize << "," << label << ",1," << insert << "," << lookup << "," << range_scan << "," << erase << "\n";
         std::cerr << label << " speedup:\n"
@@ -251,14 +264,15 @@ int main() {
     #if defined(__AVX512F__) && defined(__AVX512VL__)
     std::cerr << "AVX512\n";
     #elif defined(__AVX__) && defined(__AVX2__)
-    std::cerr << "AVX/AVX2\n"
+    std::cerr << "AVX/AVX2\n";
     #else
     std::cerr << "NO AVX\n";
     #endif
     std::cout << "load,page_size,layout,fast_inserts,Insert,Lookup,Range_scan,Erase\n";
     //load_comparison();
     guidedresearch::UniformLoad<KeyT> load(1<<22);
-    layout_comparison<1u<<14>(load);
+    //page_size_comparison(load);
+    layout_comparison<1u<<16>(load);
     //inner_node_comparison(load);
     //iterator();
     
