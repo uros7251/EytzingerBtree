@@ -307,9 +307,8 @@ struct InnerNode: public Node<KeyT, ValueT, ComparatorT, PageSize> {
     std::vector<uint32_t> enumerate_children(KeyT lower_bound = kNegInf, KeyT upper_bound = kInf) {
         assert(lower_bound <= upper_bound);
         Iterator it = 
-            lower_bound == kNegInf ? Iterator::begin(Node::count) : // needed because lower_bound implementation assumes all keys are > kNegInf
-            Iterator(this->lower_bound(lower_bound).first, Node::count);
-        auto end = this->lower_bound(upper_bound).first;
+            lower_bound == kNegInf ? Iterator::begin(Node::count) : Iterator(this->lower_bound(lower_bound).first, Node::count);
+        auto end = upper_bound == kInf ? *Iterator::end(Node::count) : this->lower_bound(upper_bound).first;
         std::vector<uint32_t> children;
         for (; *it != end; ++it) {
             children.push_back(*it);
@@ -583,7 +582,7 @@ struct InnerNode<KeyT, ValueT, ComparatorT, PageSize, NodeLayout::SORTED> : publ
     std::vector<uint32_t> enumerate_children(KeyT lower_bound = kNegInf, KeyT upper_bound = kInf) {
         assert(lower_bound <= upper_bound);
         auto start = lower_bound == kNegInf ? 0u : this->lower_bound(lower_bound).first;
-        auto end = this->lower_bound(upper_bound).first;
+        auto end = upper_bound == kInf ? Node::count-1 : this->lower_bound(upper_bound).first;
         std::vector<uint32_t> children;
         for (auto i=start; i<=end; ++i) {
             children.push_back(i);

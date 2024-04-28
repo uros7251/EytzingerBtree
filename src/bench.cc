@@ -10,7 +10,7 @@ using BufferManager = guidedresearch::BufferManager;
 using KeyT = int64_t;
 
 struct ValueT {
-    static constexpr int size=4;
+    static constexpr int size=5;
     int64_t a[size];
     ValueT() = default;
     ValueT(int64_t a) :a{} { this->a[0]=a; }
@@ -269,12 +269,10 @@ int main() {
     std::cerr << "NO AVX\n";
     #endif
     std::cout << "load,page_size,layout,fast_inserts,Insert,Lookup,Range_scan,Erase\n";
-    //load_comparison();
+    // load_comparison();
     guidedresearch::UniformLoad<KeyT> load(1<<22);
-    //page_size_comparison(load);
-    layout_comparison<1u<<16>(load);
-    //inner_node_comparison(load);
-    //iterator();
+    page_size_comparison(load);
+    // layout_comparison<1u<<16>(load);
     
     return 0;
 }
